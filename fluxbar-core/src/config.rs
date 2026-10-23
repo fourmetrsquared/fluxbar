@@ -43,11 +43,13 @@ pub struct Config {
     #[serde(default)]
     pub system: crate::system::SystemConfig,
 
-    /// Extra TOML files to merge, in order.
+    /// Extra TOML files to merge, in order (relative paths resolve against the
+    /// config directory).
     #[serde(default)]
     pub include: Vec<PathBuf>,
 
-    /// Directory with modular TOML files (defaults to `plugins.d` next to the config).
+    /// Directory with modular TOML files (defaults to `plugins.d` next to the
+    /// config; relative paths resolve against the config directory).
     #[serde(default)]
     pub include_dir: Option<PathBuf>,
 
@@ -614,6 +616,13 @@ impl Config {
             .get("include_dir")
             .and_then(toml::Value::as_str)
             .map(PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    base.join(path)
+                }
+            })
             .unwrap_or_else(|| base.join("plugins.d"));
 
         if include_dir.is_dir() {
@@ -905,6 +914,34 @@ label = "B"
         let config = Config::load(dir.path().join("fluxbar.toml")).unwrap();
         assert_eq!(config.items.len(), 2);
         assert!(config.items.contains_key("a"));
+        assert!(config.items.contains_key("b"));
+    }
+
+    #[test]
+    fn merges_relative_include_dir() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir(dir.path().join("modules")).unwrap();
+        write(
+            &dir,
+            "fluxbar.toml",
+            r#"
+include_dir = "modules"
+
+[items.a]
+label = "A"
+"#,
+        );
+        write(
+            &dir,
+            "modules/extra.toml",
+            r#"
+[items.b]
+label = "B"
+"#,
+        );
+
+        let config = Config::load(dir.path().join("fluxbar.toml")).unwrap();
+        assert_eq!(config.items.len(), 2);
         assert!(config.items.contains_key("b"));
     }
 
