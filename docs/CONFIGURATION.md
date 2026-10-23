@@ -4,6 +4,11 @@ FluxBar reads `~/.config/fluxbar/fluxbar.toml` by default. The location honours
 `XDG_CONFIG_HOME` and can be overridden with `fluxbar --config <file>` or
 `FLUXBAR_CONFIG`. Use `fluxbar config path` to see the effective path.
 
+When started without an explicit `--config`, FluxBar creates the configuration
+directory, a default `fluxbar.toml`, and the `plugins/` and `plugins.d/`
+subdirectories if they do not exist. An existing configuration is never
+overwritten; `fluxbar config init` creates one explicitly.
+
 ```bash
 fluxbar config init            # write a commented default config
 fluxbar config init --force    # overwrite

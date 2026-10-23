@@ -65,6 +65,7 @@ fluxbar trigger build_finished --payload '{"job": 3}'
 fluxbar config path | init [--force] | validate | show
 fluxbar plugin install github:user/repo
 fluxbar plugin install ./examples/plugins/hello --no-build
+fluxbar plugin install ./examples/plugins/hello --no-build --link  # development: keep sources in place
 fluxbar plugin list | restart hello | update hello | remove hello
 fluxbar paths
 ```
@@ -76,17 +77,21 @@ and `RUST_LOG`.
 ## Configuration
 
 The main file is `~/.config/fluxbar/fluxbar.toml` (respects
-`XDG_CONFIG_HOME`; override with `--config`). Partial configs are merged from
-`include = [...]` and every `*.toml` in `~/.config/fluxbar/plugins.d/`, which is
-where `fluxbar plugin install` writes registrations. See
-[docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference and
-[examples/config/full.toml](examples/config/full.toml) for a complete example.
+`XDG_CONFIG_HOME`; override with `--config`). On first start FluxBar creates the
+default configuration plus `plugins/` and `plugins.d/` there if they do not
+exist. Partial configs are merged from `include = [...]` and every `*.toml` in
+`~/.config/fluxbar/plugins.d/`, which is where `fluxbar plugin install` writes
+registrations. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full
+reference and [examples/config/full.toml](examples/config/full.toml) for a
+complete example.
 
 ## Plugins
 
 Plugins are long-running processes. FluxBar starts them once and exchanges
 JSON-RPC 2.0 messages over stdin/stdout — no process-per-update overhead. Crash
-isolation and exponential-backoff restarts are built in.
+isolation and exponential-backoff restarts are built in. Installed plugins are
+stored under `~/.config/fluxbar/plugins/`; use `--link` during development to
+register a local plugin in place instead of copying it.
 
 A minimal Rust plugin (full example in
 [examples/plugins/hello](examples/plugins/hello)):

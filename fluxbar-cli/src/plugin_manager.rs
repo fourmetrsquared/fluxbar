@@ -16,6 +16,7 @@
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -23,6 +24,9 @@ use fluxbar_core::config::Config;
 
 /// Manifest file name inside plugin repositories.
 pub const MANIFEST_FILE: &str = "fluxbar-plugin.toml";
+
+/// Metadata written next to a copied local plugin, pointing at its source.
+const LOCAL_INSTALL_METADATA: &str = ".fluxbar-install.toml";
 
 /// Plugin manifest.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -54,6 +58,9 @@ pub struct InstallOptions {
     pub source: String,
     pub name: Option<String>,
     pub build: bool,
+    /// Register a local plugin in place instead of copying it into the
+    /// configuration directory.
+    pub link: bool,
 }
 
 /// Result of a successful installation.
@@ -61,6 +68,7 @@ pub struct InstallOptions {
 pub struct InstalledPlugin {
     pub name: String,
     pub config_path: PathBuf,
+    pub location: PathBuf,
     pub command: Option<String>,
 }
 
@@ -75,6 +83,13 @@ pub fn set_config_dir(directory: PathBuf) {
 
 pub fn plugins_dir() -> Result<PathBuf> {
     Ok(config_dir()?.join("plugins"))
+}
+
+/// Create the plugin source and registration directories under `config_dir`.
+pub fn ensure_layout(config_dir: &Path) -> Result<()> {
+    fs::create_dir_all(config_dir.join("plugins"))?;
+    fs::create_dir_all(config_dir.join("plugins.d"))?;
+    Ok(())
 }
 
 fn config_dir() -> Result<PathBuf> {
@@ -143,7 +158,15 @@ fn sanitize_name(name: &str) -> String {
 }
 
 /// Install a plugin from git or a local directory.
+///
+/// Git plugins are cloned into the configuration directory. Local plugins are
+/// copied there as well, so plugin sources and registrations live together.
+/// Pass [`InstallOptions::link`] to register a local plugin in place instead.
 pub fn install(options: InstallOptions) -> Result<InstalledPlugin> {
+    install_at(options, &config_dir()?)
+}
+
+fn install_at(options: InstallOptions, config_dir: &Path) -> Result<InstalledPlugin> {
     let (url, suggested) = parse_source(&options.source)?;
     let name = options
         .name
@@ -151,62 +174,279 @@ pub fn install(options: InstallOptions) -> Result<InstalledPlugin> {
         .map(sanitize_name)
         .unwrap_or(suggested);
 
-    let root = plugins_dir()?;
-    std::fs::create_dir_all(&root)?;
+    ensure_layout(config_dir)?;
+    let root = config_dir.join("plugins");
+    let root = root
+        .canonicalize()
+        .with_context(|| format!("cannot resolve {}", root.display()))?;
 
-    // Git plugins are cloned into the plugins directory. Local plugins are
-    // registered in place, which keeps development iterations fast.
-    let destination = match &url {
-        Some(url) => {
-            let destination = root.join(&name);
-            if destination.exists() {
-                bail!(
-                    "plugin directory {} already exists; use `fluxbar plugin update {name}`",
-                    destination.display()
-                );
-            }
-            run(
-                Command::new("git")
-                    .args(["clone", "--depth", "1", url])
-                    .arg(&destination),
-                None,
-                "git clone",
-            )?;
-            destination
+    if let Some(url) = url {
+        if options.link {
+            bail!("--link is only supported for local plugin sources");
         }
-        None => {
-            let source = PathBuf::from(&options.source);
-            source
-                .canonicalize()
-                .with_context(|| format!("cannot resolve {}", source.display()))?
+        let destination = root.join(&name);
+        if destination.exists() {
+            bail!(
+                "plugin directory {} already exists; use `fluxbar plugin update {name}`",
+                destination.display()
+            );
         }
-    };
+        run(
+            Command::new("git")
+                .args(["clone", "--depth", "1", &url])
+                .arg(&destination),
+            None,
+            "git clone",
+        )?;
 
-    let manifest = read_manifest(&destination)?;
+        let manifest = read_manifest(&destination)?;
+        let plugin_name = manifest.name.clone().unwrap_or_else(|| name.clone());
+        if options.build {
+            build_plugin(&destination, &manifest)?;
+        }
+        let entry = resolve_entry(&destination, &manifest)?;
+        let config_path = write_registration(config_dir, &plugin_name, &entry, &manifest)?;
+
+        return Ok(InstalledPlugin {
+            name: plugin_name,
+            config_path,
+            location: destination,
+            command: Some(entry.display()),
+        });
+    }
+
+    let source = PathBuf::from(&options.source);
+    let source = source
+        .canonicalize()
+        .with_context(|| format!("cannot resolve {}", source.display()))?;
+    if !source.is_dir() {
+        bail!(
+            "local plugin source must be a directory: {}",
+            source.display()
+        );
+    }
+
+    let manifest = read_manifest(&source)?;
     let plugin_name = manifest.name.clone().unwrap_or_else(|| name.clone());
 
     if options.build {
-        if let Some(build) = &manifest.build {
-            run(
-                Command::new("/bin/sh")
-                    .arg("-c")
-                    .arg(build)
-                    .current_dir(&destination),
-                None,
-                "build",
-            )?;
-        }
+        build_plugin(&source, &manifest)?;
+    }
+    let source_entry = resolve_entry(&source, &manifest)?;
+
+    if options.link {
+        let config_path = write_registration(config_dir, &plugin_name, &source_entry, &manifest)?;
+        return Ok(InstalledPlugin {
+            name: plugin_name,
+            config_path,
+            location: source,
+            command: Some(source_entry.display()),
+        });
     }
 
-    let entry = resolve_entry(&destination, &manifest)?;
+    let destination = root.join(&name);
+    if destination.exists() {
+        bail!(
+            "plugin directory {} already exists; use `fluxbar plugin update {name}`",
+            destination.display()
+        );
+    }
+    ensure_disjoint(&source, &destination)?;
+    if let Err(error) = copy_local_install(&source, &destination, &manifest) {
+        // Do not leave a half-installed plugin behind.
+        let _ = fs::remove_dir_all(&destination);
+        return Err(error);
+    }
 
-    let config_path = write_registration(&plugin_name, &entry, &manifest)?;
+    let (entry, config_path) = match (|| {
+        let entry = resolve_entry(&destination, &manifest)?;
+        write_local_metadata(&destination, &source)?;
+        let config_path = write_registration(config_dir, &plugin_name, &entry, &manifest)?;
+        Ok((entry, config_path))
+    })() {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&destination);
+            return Err(error);
+        }
+    };
 
     Ok(InstalledPlugin {
         name: plugin_name,
         config_path,
+        location: destination,
         command: Some(entry.display()),
     })
+}
+
+fn build_plugin(directory: &Path, manifest: &PluginManifest) -> Result<()> {
+    if let Some(build) = &manifest.build {
+        run(
+            Command::new("/bin/sh")
+                .arg("-c")
+                .arg(build)
+                .current_dir(directory),
+            None,
+            "build",
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_disjoint(source: &Path, destination: &Path) -> Result<()> {
+    if source == destination || destination.starts_with(source) || source.starts_with(destination) {
+        bail!(
+            "cannot copy plugin source {} into {}",
+            source.display(),
+            destination.display()
+        );
+    }
+    Ok(())
+}
+
+fn should_skip_root_entry(name: &std::ffi::OsStr) -> bool {
+    matches!(
+        name.to_str(),
+        Some(".git" | "target" | LOCAL_INSTALL_METADATA)
+    )
+}
+
+fn copy_local_install(source: &Path, destination: &Path, manifest: &PluginManifest) -> Result<()> {
+    copy_plugin_source(source, destination)?;
+    copy_entry_artifact(source, destination, manifest)?;
+    Ok(())
+}
+
+fn copy_plugin_source(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in
+        fs::read_dir(source).with_context(|| format!("failed to read {}", source.display()))?
+    {
+        let entry = entry?;
+        if should_skip_root_entry(&entry.file_name()) {
+            continue;
+        }
+        copy_path(&entry.path(), &destination.join(entry.file_name()))?;
+    }
+    Ok(())
+}
+
+fn copy_entry_artifact(source: &Path, destination: &Path, manifest: &PluginManifest) -> Result<()> {
+    let Some(entry) = &manifest.entry else {
+        return Ok(());
+    };
+
+    for interpreter in ["node ", "python3 ", "python "] {
+        if let Some(script) = entry.strip_prefix(interpreter) {
+            if Path::new(script.trim()).is_absolute() {
+                bail!("plugin entry `{entry}` points outside the plugin directory; use --link");
+            }
+            return Ok(());
+        }
+    }
+
+    let entry_path = Path::new(entry);
+    if entry_path.is_absolute() {
+        bail!("plugin entry `{entry}` is absolute; use --link to register it in place");
+    }
+
+    let from = source.join(entry_path);
+    if !from.exists() {
+        bail!("entry point {} does not exist after build", from.display());
+    }
+    copy_path(&from, &destination.join(entry_path))
+}
+
+fn copy_path(from: &Path, to: &Path) -> Result<()> {
+    let metadata =
+        fs::symlink_metadata(from).with_context(|| format!("cannot inspect {}", from.display()))?;
+
+    if metadata.file_type().is_symlink() {
+        copy_symlink(from, to)?;
+    } else if metadata.is_dir() {
+        if fs::symlink_metadata(to).is_ok() {
+            remove_path(to)?;
+        }
+        fs::create_dir_all(to)?;
+        for entry in
+            fs::read_dir(from).with_context(|| format!("failed to read {}", from.display()))?
+        {
+            let entry = entry?;
+            copy_path(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if fs::symlink_metadata(to).is_ok() {
+            remove_path(to)?;
+        }
+        fs::copy(from, to)
+            .with_context(|| format!("failed to copy {} to {}", from.display(), to.display()))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn copy_symlink(from: &Path, to: &Path) -> Result<()> {
+    let target =
+        fs::read_link(from).with_context(|| format!("cannot read symlink {}", from.display()))?;
+    if fs::symlink_metadata(to).is_ok() {
+        remove_path(to)?;
+    }
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    std::os::unix::fs::symlink(&target, to).with_context(|| {
+        format!(
+            "failed to copy symlink {} to {}",
+            from.display(),
+            to.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn copy_symlink(from: &Path, to: &Path) -> Result<()> {
+    // Symlinks are not portable; copy the resolved target when possible.
+    copy_path(&from.canonicalize()?, to)
+}
+
+fn remove_path(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LocalInstall {
+    source: PathBuf,
+}
+
+fn write_local_metadata(destination: &Path, source: &Path) -> Result<()> {
+    let metadata = LocalInstall {
+        source: source.to_path_buf(),
+    };
+    let contents = toml::to_string(&metadata)?;
+    fs::write(destination.join(LOCAL_INSTALL_METADATA), contents)?;
+    Ok(())
+}
+
+fn read_local_metadata(destination: &Path) -> Result<Option<LocalInstall>> {
+    let path = destination.join(LOCAL_INSTALL_METADATA);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let metadata =
+        toml::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))?;
+    Ok(Some(metadata))
 }
 
 fn read_manifest(directory: &Path) -> Result<PluginManifest> {
@@ -340,12 +580,13 @@ fn slice_is_empty<T>(values: &[T]) -> bool {
 }
 
 fn write_registration(
+    config_dir: &Path,
     name: &str,
     entry: &ResolvedEntry,
     manifest: &PluginManifest,
 ) -> Result<PathBuf> {
-    let dir = config_dir()?.join("plugins.d");
-    std::fs::create_dir_all(&dir)?;
+    let dir = config_dir.join("plugins.d");
+    fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{name}.toml"));
 
     #[derive(Serialize)]
@@ -383,31 +624,50 @@ fn write_registration(
     Ok(path)
 }
 
-/// Remove a plugin registration and, for git-installed plugins, its sources.
+/// Remove a plugin registration and its installed sources.
+///
+/// Git clones and copied local plugins live inside the configuration
+/// directory. Linked local plugins are left untouched.
 pub fn remove(name: &str) -> Result<()> {
+    remove_at(name, &config_dir()?)
+}
+
+fn remove_at(name: &str, config_dir: &Path) -> Result<()> {
     let name = sanitize_name(name);
-    let config_path = config_dir()?.join("plugins.d").join(format!("{name}.toml"));
+    let config_path = config_dir.join("plugins.d").join(format!("{name}.toml"));
     if !config_path.exists() {
         bail!("plugin `{name}` is not registered");
     }
-    std::fs::remove_file(&config_path)?;
+    fs::remove_file(&config_path)?;
 
-    // Local plugins live outside the plugins directory and are left on disk.
-    let source = plugins_dir()?.join(&name);
-    if source.exists() {
-        std::fs::remove_dir_all(&source)?;
+    let installed = config_dir.join("plugins").join(&name);
+    if installed.exists() {
+        fs::remove_dir_all(&installed)?;
     }
     Ok(())
 }
 
 /// Update a plugin (git pull + rebuild when applicable).
 pub fn update(name: &str) -> Result<()> {
+    update_at(name, &config_dir()?)
+}
+
+fn update_at(name: &str, config_dir: &Path) -> Result<()> {
     let name = sanitize_name(name);
-    let config_path = config_dir()?.join("plugins.d").join(format!("{name}.toml"));
+    let config_path = config_dir.join("plugins.d").join(format!("{name}.toml"));
     if !config_path.exists() {
         bail!("plugin `{name}` is not registered");
     }
-    let source = locate_source(&name, &config_path)?;
+
+    let destination = config_dir.join("plugins").join(&name);
+    let copied = read_local_metadata(&destination)?;
+    let source = match &copied {
+        Some(metadata) => metadata.source.clone(),
+        None => locate_source(config_dir, &name, &config_path)?,
+    };
+    if !source.exists() {
+        bail!("plugin source {} no longer exists", source.display());
+    }
 
     if source.join(".git").exists() {
         run(
@@ -432,21 +692,29 @@ pub fn update(name: &str) -> Result<()> {
         )?;
     }
 
-    let plugin_name = manifest.name.clone().unwrap_or(name);
-    let entry = resolve_entry(&source, &manifest)?;
-    write_registration(&plugin_name, &entry, &manifest)?;
+    let plugin_name = manifest.name.clone().unwrap_or_else(|| name.clone());
+    let mut entry = resolve_entry(&source, &manifest)?;
+
+    if copied.is_some() {
+        ensure_disjoint(&source, &destination)?;
+        copy_local_install(&source, &destination, &manifest)?;
+        write_local_metadata(&destination, &source)?;
+        entry = resolve_entry(&destination, &manifest)?;
+    }
+
+    write_registration(config_dir, &plugin_name, &entry, &manifest)?;
     Ok(())
 }
 
-fn locate_source(name: &str, config_path: &Path) -> Result<PathBuf> {
-    let cloned = plugins_dir()?.join(name);
-    if cloned.exists() {
-        return Ok(cloned);
+fn locate_source(config_dir: &Path, name: &str, config_path: &Path) -> Result<PathBuf> {
+    let installed = config_dir.join("plugins").join(name);
+    if installed.exists() {
+        return Ok(installed);
     }
 
     // Local plugin: find the directory containing the registered command or
     // script argument.
-    let contents = std::fs::read_to_string(config_path)
+    let contents = fs::read_to_string(config_path)
         .with_context(|| format!("failed to read {}", config_path.display()))?;
     let value: toml::Value = toml::from_str(&contents)?;
     let plugin = value
@@ -501,6 +769,35 @@ fn run(command: &mut Command, cwd: Option<&Path>, label: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    fn write_python_plugin(root: &Path) -> PathBuf {
+        let source = root.join("demo");
+        fs::create_dir_all(source.join("target")).unwrap();
+        fs::create_dir_all(source.join(".git")).unwrap();
+        fs::write(source.join("target/ignored"), "ignored").unwrap();
+        fs::write(source.join(".git/ignored"), "ignored").unwrap();
+        fs::write(
+            source.join(MANIFEST_FILE),
+            r#"
+name = "demo"
+entry = "plugin.py"
+subscribe = ["*"]
+"#,
+        )
+        .unwrap();
+        fs::write(source.join("plugin.py"), "print('v1')").unwrap();
+        source
+    }
+
+    fn copy_options(source: &Path) -> InstallOptions {
+        InstallOptions {
+            source: source.display().to_string(),
+            name: None,
+            build: false,
+            link: false,
+        }
+    }
 
     #[test]
     fn parses_github_source() {
@@ -531,16 +828,98 @@ mod tests {
     }
 
     #[test]
+    fn local_plugin_is_copied_into_config_dir() {
+        let config = TempDir::new().unwrap();
+        let source_root = TempDir::new().unwrap();
+        let source = write_python_plugin(source_root.path());
+
+        let installed = install_at(copy_options(&source), config.path()).unwrap();
+        let destination = config.path().join("plugins/demo");
+
+        assert_eq!(installed.name, "demo");
+        assert_eq!(installed.location, destination.canonicalize().unwrap());
+        assert!(destination.join("plugin.py").exists());
+        assert!(destination.join(LOCAL_INSTALL_METADATA).exists());
+        // Build output and VCS metadata are not duplicated.
+        assert!(!destination.join("target").exists());
+        assert!(!destination.join(".git").exists());
+        // The original source is untouched.
+        assert!(source.join("plugin.py").exists());
+
+        let registration = fs::read_to_string(&installed.config_path).unwrap();
+        let expected = destination.join("plugin.py");
+        assert!(registration.contains(&expected.display().to_string()));
+        assert!(registration.contains("python3"));
+    }
+
+    #[test]
+    fn link_keeps_local_plugin_in_place() {
+        let config = TempDir::new().unwrap();
+        let source_root = TempDir::new().unwrap();
+        let source = write_python_plugin(source_root.path());
+
+        let mut options = copy_options(&source);
+        options.link = true;
+        let installed = install_at(options, config.path()).unwrap();
+
+        assert_eq!(installed.location, source.canonicalize().unwrap());
+        assert!(!config.path().join("plugins/demo").exists());
+        let registration = fs::read_to_string(&installed.config_path).unwrap();
+        assert!(registration.contains(&source.canonicalize().unwrap().display().to_string()));
+    }
+
+    #[test]
+    fn copied_local_plugin_can_be_updated_and_removed() {
+        let config = TempDir::new().unwrap();
+        let source_root = TempDir::new().unwrap();
+        let source = write_python_plugin(source_root.path());
+        install_at(copy_options(&source), config.path()).unwrap();
+
+        // The fake .git directory used to verify exclusion is not a real
+        // repository, so do not let update try to pull it.
+        fs::remove_dir_all(source.join(".git")).unwrap();
+        fs::write(source.join("plugin.py"), "print('v2')").unwrap();
+        update_at("demo", config.path()).unwrap();
+        assert_eq!(
+            fs::read_to_string(config.path().join("plugins/demo/plugin.py")).unwrap(),
+            "print('v2')"
+        );
+
+        remove_at("demo", config.path()).unwrap();
+        assert!(!config.path().join("plugins/demo").exists());
+        assert!(!config.path().join("plugins.d/demo.toml").exists());
+        assert!(source.join("plugin.py").exists());
+    }
+
+    #[test]
+    fn link_is_rejected_for_git_sources() {
+        let config = TempDir::new().unwrap();
+        let options = InstallOptions {
+            source: "github:user/repo".into(),
+            name: None,
+            build: false,
+            link: true,
+        };
+        let error = install_at(options, config.path()).unwrap_err();
+        assert!(error.to_string().contains("--link"));
+    }
+
+    #[test]
     fn writes_registration() {
-        let dir = tempfile::TempDir::new().unwrap();
-        // Can't override the config dir easily; just test serialization shape.
+        let config = TempDir::new().unwrap();
         let manifest = PluginManifest {
             subscribe: vec!["tick".into()],
             tick_interval: Some(1),
             ..PluginManifest::default()
         };
-        let contents = toml::to_string_pretty(&manifest).unwrap();
-        assert!(contents.contains("tick"));
-        let _ = dir;
+        let entry = ResolvedEntry {
+            program: "/usr/bin/demo".into(),
+            args: Vec::new(),
+        };
+        let path = write_registration(config.path(), "demo", &entry, &manifest).unwrap();
+        let contents = fs::read_to_string(path).unwrap();
+        assert!(contents.contains("[plugins.demo]"));
+        assert!(contents.contains("command = \"/usr/bin/demo\""));
+        assert!(contents.contains("tick_interval = 1"));
     }
 }

@@ -1,6 +1,8 @@
 //! Daemon orchestration: wires state, IPC, plugins, system events and the UI.
 
+use crate::default_config;
 use crate::handler::DaemonHandler;
+use crate::plugin_manager;
 use anyhow::{Context, Result};
 use fluxbar_core::builtin;
 use fluxbar_core::config::Config;
@@ -12,7 +14,9 @@ use fluxbar_core::state::StateHandle;
 use fluxbar_core::system::SystemMonitor;
 use fluxbar_macos::{MacRenderer, UiCommand, UiEvent};
 use serde_json::json;
-use std::path::PathBuf;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -97,20 +101,55 @@ fn load_config(config_path: Option<PathBuf>) -> Result<(Config, Option<PathBuf>)
             Ok((config, Some(path)))
         }
         None => {
-            let path = Config::default_path();
-            match &path {
-                Some(path) if path.exists() => {
-                    let config = Config::load(path)
-                        .with_context(|| format!("failed to load {}", path.display()))?;
-                    Ok((config, Some(path.clone())))
-                }
-                _ => {
-                    warn!("no configuration file found, using built-in defaults");
-                    Ok((Config::default(), path))
-                }
+            let Some(path) = Config::default_path() else {
+                warn!("could not determine the configuration directory, using built-in defaults");
+                return Ok((Config::default(), None));
+            };
+
+            if let Err(error) = bootstrap_default_layout(&path) {
+                warn!(%error, path = %path.display(), "could not prepare the default configuration");
+            }
+
+            if path.exists() {
+                let config = Config::load(&path)
+                    .with_context(|| format!("failed to load {}", path.display()))?;
+                Ok((config, Some(path)))
+            } else {
+                warn!("no configuration file found, using built-in defaults");
+                Ok((Config::default(), Some(path)))
             }
         }
     }
+}
+
+/// Create `~/.config/fluxbar`, its plugin directories, and a default config
+/// on first start. Existing files are never overwritten.
+fn bootstrap_default_layout(config_path: &Path) -> Result<()> {
+    let Some(directory) = config_path.parent() else {
+        return Ok(());
+    };
+    fs::create_dir_all(directory)?;
+    plugin_manager::ensure_layout(directory)?;
+
+    if config_path.exists() {
+        return Ok(());
+    }
+
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(config_path)
+    {
+        Ok(mut file) => {
+            file.write_all(default_config::DEFAULT_CONFIG.as_bytes())?;
+            info!(path = %config_path.display(), "created default configuration");
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Another process won the race; use the file it created.
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -397,5 +436,39 @@ async fn handle_ui_event(state: &StateHandle, event: UiEvent) {
         fluxbar_core::config::MouseActionType::Plugin => {
             warn!(item = %item_name, "plugin mouse actions are not implemented yet");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn bootstrap_creates_config_and_plugin_dirs() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("fluxbar.toml");
+
+        bootstrap_default_layout(&path).unwrap();
+
+        assert!(path.exists());
+        assert!(dir.path().join("plugins").is_dir());
+        assert!(dir.path().join("plugins.d").is_dir());
+        let config = Config::load(&path).unwrap();
+        assert!(!config.items.is_empty());
+    }
+
+    #[test]
+    fn bootstrap_does_not_overwrite_existing_config() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("fluxbar.toml");
+        fs::write(&path, "[bar]\nheight = 41\n").unwrap();
+
+        bootstrap_default_layout(&path).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, "[bar]\nheight = 41\n");
+        assert!(dir.path().join("plugins").is_dir());
+        assert!(dir.path().join("plugins.d").is_dir());
     }
 }

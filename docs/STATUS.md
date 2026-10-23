@@ -16,13 +16,13 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
 | FR-3.1 | 🟡 | Persistent stdio JSON-RPC plugins are fully implemented. UDS transport is reserved (config type accepted, only `external` is started). |
 | FR-3.2 | ⬜ | Wasm plugins are a v2 goal; no runtime/sandbox yet. |
 | FR-3.3 | ✅ | `fluxbar-sdk` with one required async method (`on_event`), optional `on_init`/`on_tick`/`on_shutdown`, and `run`/`run_blocking`. |
-| FR-3.4 | ✅ | `fluxbar plugin install github:user/repo`, git URLs and local paths; builds, resolves entry points, writes `plugins.d/<name>.toml`. |
+| FR-3.4 | ✅ | `fluxbar plugin install github:user/repo`, git URLs and local paths; builds, resolves entry points, copies local plugins into `plugins/`, writes `plugins.d/<name>.toml`. `--link` keeps local sources in place. |
 | FR-3.5 | ✅ | Process isolation per plugin, crash detection, exponential backoff capped at 60 s, configurable retries, stderr forwarding. |
 | FR-4.1 | ✅ | A single item can draw icon + label + progress + graph simultaneously. |
 | FR-4.2 | ✅ | Frame transitions interpolate bounds, label/icon/background/border colors, alpha/opacity, progress and corner radius using configurable duration + 30 easings. |
 | FR-4.3 | 🟡 | Vector line graphs are rendered from numeric arrays. Dedicated bar-chart mode is not exposed. |
 | FR-4.4 | ✅ | Click/right-click, scroll and enter/leave are delivered to the daemon, emit `mouse.*` events, and run shell/trigger bindings. `plugin`-type actions are reserved. |
-| FR-5.1 | ✅ | TOML configuration with validation and `fluxbar config` tooling. |
+| FR-5.1 | ✅ | TOML configuration with validation and `fluxbar config` tooling. The default config, `plugins/`, and `plugins.d/` are created under `~/.config/fluxbar` on first start. |
 | FR-5.2 | ✅ | Deep-merged `include` list and modular `plugins.d/*.toml`. |
 
 ## Non-functional requirements

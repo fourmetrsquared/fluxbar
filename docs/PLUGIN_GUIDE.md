@@ -118,10 +118,12 @@ fluxbar plugin install examples/plugins/hello --no-build
 ```
 
 Then add an item named `hello` (and optionally `hello-graph`) to the config, or
-run `fluxbar add hello --kind text --position center`. The installer registers
-the plugin in `~/.config/fluxbar/plugins.d/hello.toml` and asks a running daemon
-to reload its configuration, so the plugin starts immediately. Without a running
-daemon, the registration is picked up on the next start:
+run `fluxbar add hello --kind text --position center`. The installer copies the
+plugin to `~/.config/fluxbar/plugins/hello`, registers it in
+`~/.config/fluxbar/plugins.d/hello.toml`, and asks a running daemon to reload
+its configuration, so the plugin starts immediately. Without a running daemon,
+the registration is picked up on the next start. Pass `--link` if you want to
+keep editing the source in place:
 
 ```bash
 fluxbar plugin install examples/plugins/hello --no-build
@@ -197,17 +199,23 @@ auto_restart = true
 fluxbar plugin install github:user/repo
 fluxbar plugin install https://github.com/user/repo.git
 fluxbar plugin install ./path/to/plugin --no-build
+fluxbar plugin install ./path/to/plugin --no-build --link  # development
 fluxbar plugin install github:user/repo --name custom-name
 ```
 
 - Git sources are cloned into `~/.config/fluxbar/plugins/<name>` and built.
-- Local sources are registered in place, which is ideal during development.
-  Build them first if you use `--no-build`.
+- Local sources are **copied** into `~/.config/fluxbar/plugins/<name>` along
+  with their entry point, so plugins and configuration live together. The
+  original source is left untouched. With `--no-build`, build the plugin first
+  or make sure its entry point already exists.
+- Use `--link` for local development: the registration points at the source
+  directory and changes are picked up after rebuild/restart.
 - Install attempts to reload a running daemon automatically; otherwise run
   `fluxbar trigger config_reload` after starting it.
-- `update` runs `git pull --ff-only` for clones and re-runs the build command,
-  then rewrites the registration.
-- `remove` deletes the registration and cloned sources; local sources are kept.
+- `update` runs `git pull --ff-only` for clones and re-runs the build command.
+  Copied local plugins are re-synced from their original source.
+- `remove` deletes the registration and installed sources. Linked local sources
+  are left untouched.
 - `restart` asks the running daemon to restart a plugin without restarting the
   bar (`fluxbar plugin restart hello`).
 

@@ -159,6 +159,7 @@ pub fn config(config_path: Option<PathBuf>, command: crate::ConfigCommand) -> Re
             }
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
+                plugin_manager::ensure_layout(parent)?;
             }
             std::fs::write(&path, default_config::DEFAULT_CONFIG)?;
             println!("wrote {}", path.display());
@@ -203,9 +204,11 @@ pub fn plugin(
                 source: args.source,
                 name: args.name,
                 build: !args.no_build,
+                link: args.link,
             };
             let installed = plugin_manager::install(options)?;
             println!("installed plugin `{}`", installed.name);
+            println!("location: {}", installed.location.display());
             println!("config: {}", installed.config_path.display());
             if let Some(command) = &installed.command {
                 println!("command: {command}");

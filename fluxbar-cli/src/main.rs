@@ -123,7 +123,7 @@ enum PluginCommand {
     Remove { name: String },
     /// Restart a plugin.
     Restart { name: String },
-    /// Update a git-installed plugin (pull + rebuild).
+    /// Update a plugin (git pull, rebuild, re-sync copied sources).
     Update { name: String },
 }
 
@@ -137,6 +137,10 @@ struct InstallArgs {
     /// Skip running the build command.
     #[arg(long)]
     no_build: bool,
+    /// Register a local plugin in place instead of copying it into the
+    /// FluxBar configuration directory. Useful during development.
+    #[arg(long)]
+    link: bool,
 }
 
 fn main() -> ExitCode {
