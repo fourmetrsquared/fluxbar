@@ -1,5 +1,9 @@
 # Configuration reference
 
+For an end-to-end tutorial in Russian — first start, bar customization, widgets,
+layout, and plugin authoring — see [GUIDE_RU.md](GUIDE_RU.md). This page is the
+field reference; the guide shows the workflows.
+
 FluxBar reads `~/.config/fluxbar/fluxbar.toml` by default. The location honours
 `XDG_CONFIG_HOME` and can be overridden with `fluxbar --config <file>` or
 `FLUXBAR_CONFIG`. Use `fluxbar config path` to see the effective path.
@@ -26,7 +30,9 @@ include_dir = "plugins.d"      # default: <config dir>/plugins.d
 Includes are merged at the TOML level: a partial file only overrides the keys it
 defines. `plugins.d/*.toml` files are merged in alphabetical order after the
 explicit includes, which makes installed plugins override matching entries.
-Includes are not recursive.
+Includes are not recursive. Relative `include` and `include_dir` paths are
+resolved against the directory containing the main config; absolute paths are
+used as-is.
 
 ## `[bar]`
 
@@ -36,11 +42,11 @@ Includes are not recursive.
 | `position` | `"top"` \| `"bottom"` | `"top"` | Placement on screen. The bar is pinned below the native menu bar for top placement. |
 | `background` | color | `"0xCC1E1E2E"` | Bar background. |
 | `corner_radius` | float | `0` | Rounded bar corners. |
-| `blur_radius` | float | `0` | Parsed but not applied yet. |
+| `blur_radius` | float | `0` | Parsed but not applied by the native panel yet. |
 | `padding` | insets | `8` horizontal | Inner padding around all items. |
 | `item_spacing` | float | `6` | Gap between items in a group. |
-| `top_margin` | float | `0` | Extra margin between the bar and the screen edge. |
-| `full_width` | bool | `true` | Span the full screen; otherwise capped at 1200 pt. |
+| `top_margin` | float | `0` | Parsed but not applied by the native window yet. |
+| `full_width` | bool | `true` | Span the full screen; otherwise capped at 1200 pt and anchored left. |
 | `hidden` | bool | `false` | Start with the bar hidden. |
 | `display` | int | main display | Reserved for multi-monitor targeting. |
 | `font` | string | system | Default label font family. |
@@ -81,9 +87,9 @@ way to set a consistent label/icon font or padding.
 | `border_color` | color | none | Border color. |
 | `border_width` | float | `0` | Border width. |
 | `align` | `"left"` \| `"center"` \| `"right"` | `"center"` | Content alignment. |
-| `width`, `min_width`, `max_width` | float | auto | Width constraints; `0` means auto/unlimited. |
+| `width`, `min_width`, `max_width` | float | auto | Width constraints; `0` means auto/unlimited. `max_width` does not add an ellipsis yet. |
 | `visible` | bool | `true` | Visibility toggle. |
-| `drawing_order` | int | `0` | Reserved paint-order hint. |
+| `drawing_order` | int | `0` | Ordering within the position group (lower comes first, then name). Not a global z-index. |
 | `click_action`, `scroll_action`, `enter_action`, `leave_action` | action | none | Mouse bindings (see below). |
 | `plugin` | string | none | Plugin that owns the item (informational). |
 | `properties` | table | `{}` | Arbitrary JSON values for tooling. |
@@ -111,7 +117,7 @@ when no action is bound.
 | `battery` | `power_state` | `87%` |
 | `volume` | `volume_change` | `80%` |
 | `media` | `media_change` (enable `system.media`) | `Artist — Title` |
-| `time` | internal minute clock | `18:04` |
+| `time` | internal 1-second clock (label changes per minute) | `18:04` |
 | `brightness` | reserved (event type defined, no poller) | — |
 | `text` / `icon` / `progress` / `graph` / `custom` | CLI, IPC or plugins | — |
 
@@ -187,6 +193,11 @@ endpoint = "https://example.com"
 (stdio) is implemented today. A plugin that crashes is restarted with
 exponential backoff; the backoff resets after a stable run of 60 seconds.
 
+This table is read when the daemon starts a plugin. `fluxbar plugin restart`
+reuses the already loaded spec; after changing `subscribe`, `tick_interval`,
+`config`, `command`, `env` or `working_dir`, restart the daemon (or stop/start
+it). See [GUIDE_RU.md](GUIDE_RU.md#7-редактирование-плагинов) for the workflow.
+
 ## `[events.custom.<name>]`
 
 Optional documentation entries with a `description`; useful for making custom
@@ -202,7 +213,12 @@ Reloading re-reads the config, updates bar styling on the next frame, adds new
 items and merges existing ones, and starts newly registered plugins. Items are
 never deleted by a reload (use `fluxbar remove`). Timers, the system-monitor
 intervals and plugins removed from the config keep their startup state until
-the daemon is restarted.
+the daemon is restarted. `bar.hidden` is not reapplied, and changes to an
+existing item's static `kind`, `position` or non-empty `label`/`icon` are not
+guaranteed to replace the runtime state. Plugin specs already loaded by the
+daemon are also reused. Restart the daemon for a full reconcile; see
+[GUIDE_RU.md](GUIDE_RU.md#9-что-применяется-при-reload) for the field-by-field
+table.
 
 ## Runtime updates
 

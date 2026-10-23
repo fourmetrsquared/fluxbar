@@ -1,5 +1,9 @@
 # Plugin guide
 
+For a step-by-step tutorial in Russian — from an empty directory through
+installation, iteration, and item updates — see [GUIDE_RU.md](GUIDE_RU.md).
+This page is the protocol and reference documentation.
+
 FluxBar plugins are ordinary executables. The daemon starts each plugin once and
 keeps it alive, exchanging newline-delimited JSON-RPC 2.0 messages over stdin
 and stdout. There is no process spawn per update.
@@ -29,7 +33,7 @@ There are three host methods:
 | --- | --- | --- |
 | `init` | Once after spawn | `name`, `config` (the `[plugins.<name>.config]` table), `subscribe`, `version` |
 | `event` | For each subscribed event and each `tick_interval` | `kind`, `payload`, `timestamp`, `source` |
-| `shutdown` | On stop/reload | `null` |
+| `shutdown` | On daemon stop | `null` |
 
 For `event`, respond with an object:
 
@@ -56,7 +60,7 @@ once; updates are merged into the item state.
 
 `events` are emitted on the FluxBar bus, so other plugins and UI bindings can
 react to them. An `id` must match the request id. Requests time out after 10
-seconds; a timeout is treated as a crash.
+seconds; a timeout while waiting for an `event` response is treated as a crash.
 
 Environment variables provided to every plugin:
 `FLUXBAR_PLUGIN_NAME` and `FLUXBAR_PROTOCOL=1`. Plugin stderr is forwarded to
@@ -217,7 +221,14 @@ fluxbar plugin install github:user/repo --name custom-name
 - `remove` deletes the registration and installed sources. Linked local sources
   are left untouched.
 - `restart` asks the running daemon to restart a plugin without restarting the
-  bar (`fluxbar plugin restart hello`).
+  bar (`fluxbar plugin restart hello`). It reuses the spec loaded when the
+  daemon started.
+- `update` does **not** restart the plugin. For a linked or copied plugin the
+  usual loop is: edit → build (`cargo build --release` or the manifest command)
+  → `fluxbar plugin update hello` (rebuilds; copied installs are re-synced) →
+  `fluxbar plugin restart hello`. If `subscribe`, `tick_interval`, `config`,
+  `command`, `env` or `working_dir` changed, restart the daemon so the new spec
+  is loaded.
 
 ## Testing plugins
 
@@ -240,5 +251,6 @@ Keep stdout reserved for JSON responses; write diagnostics to stderr.
   seconds and doubling up to 60 seconds.
 - `max_restarts = 0` means unlimited; set a positive value to cap attempts.
 - A plugin that runs for at least 60 seconds gets a fresh backoff.
-- The supervisor forwards plugin stderr to the daemon log and exposes status
-  through `fluxbar list --plugins` (running, restarts, pid, last error).
+- The supervisor forwards plugin stderr to the daemon log. `fluxbar list
+  --plugins` shows name, running state, restarts and pid; the JSON-RPC
+  `plugin.list` response also includes `last_error`.

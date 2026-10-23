@@ -8,7 +8,7 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
 | ID | Status | Notes |
 | --- | --- | --- |
 | FR-1.1 | ✅ | `item.add/set/remove/get/list` over JSON-RPC; CLI wrappers. No restart required. |
-| FR-1.2 | 🟡 | `left`/`center`/`right` groups and item ordering are supported. Absolute x positioning and explicit stacking are not exposed; `drawing_order` is parsed but not used by layout. |
+| FR-1.2 | 🟡 | `left`/`center`/`right` groups and ordering within a group (`drawing_order`, then name) are supported. Absolute x positioning and global stacking are not exposed. |
 | FR-1.3 | ⬜ | Native menu-bar icon aliases are not implemented. |
 | FR-2.1 | 🟡 | Space (via `space_command`), app focus, volume, power/battery, media (opt-in) and CPU/memory events are emitted. `brightness_change` exists as an event type but has no poller. |
 | FR-2.2 | ✅ | `fluxbar trigger <name> --payload '<json>'`; names are validated. |
@@ -29,10 +29,10 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
 
 | ID | Status | Notes |
 | --- | --- | --- |
-| NFR-1 | 🟡 | Event-driven design (no polling when idle apart from configured system intervals; clock wakes once per minute) and no repaint unless the frame version changes. A formal <0.5% idle CPU benchmark has not been added. |
-| NFR-2 | 🟡 | UI loop polls commands every 16 ms; IPC calls are handled immediately on the tokio runtime. No end-to-end latency benchmark yet. |
-| NFR-3 | ✅ | Slow event subscribers get a `Lagged` warning instead of blocking producers; plugin failures are isolated; invalid config/updates return errors. |
-| NFR-4 | 🟡 | `Renderer` is platform-independent and non-macOS builds run headless; Wasm sandboxing is not implemented. |
+| NFR-1 | 🟡 | Event-driven design (no polling when idle apart from configured system intervals; the clock wakes once per second and only repaints when the minute label changes) and no repaint unless the frame version changes. Formal <0.5% idle CPU and <16 ms event-latency benchmarks have not been added. |
+| NFR-2 | ✅ | Slow event subscribers get a `Lagged` warning instead of blocking producers; plugin failures are isolated; invalid config/updates return errors. |
+| NFR-3 | 🟡 | Plugins run in separate processes and cannot access core memory, but there is no Wasm sandbox or default filesystem/network restriction yet. |
+| NFR-4 | 🟡 | `Renderer` is platform-independent and non-macOS builds run headless; a second native backend does not exist yet. |
 
 ## Definition of done
 
@@ -41,7 +41,7 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ clean |
 | `cargo fmt --all -- --check` | ✅ clean |
 | Unit tests for config parsing and IPC routing | ✅ (config includes/merging/timers/mouse actions, JSON-RPC roundtrip, handler routing, plugin protocol/backoff, layout/animations) |
-| Docs updated | ✅ README, configuration reference, plugin guide, status, examples, plugin authoring |
+| Docs updated | ✅ README, configuration reference, plugin guide, status, examples, Russian end-to-end guide |
 
 ## Milestones
 

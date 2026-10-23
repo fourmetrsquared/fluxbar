@@ -476,13 +476,11 @@ It does not reconcile the rest of the running system:
 
 ### [ ] P3-03 — Refresh documentation and status (`Docs`, repo)
 
-- `docs/STATUS.md` has stale/misaligned data: `drawing_order` is described as
-  unused although it sorts within groups, NFR numbering does not match
-  `docs/REQUIREMENTS.md`, and the clock is said to wake once per minute while
-  the daemon ticks every second.
+- Keep `docs/STATUS.md`, `docs/CONFIGURATION.md`, `docs/PLUGIN_GUIDE.md` and
+  the known-limitations list in sync with the implementation (including the
+  distinction between per-group `drawing_order` and a future global z-index).
 - Add an architecture overview, an IPC/API reference, a plugin migration
   guide, a troubleshooting/permissions page, and a configuration cookbook.
-- Link this TODO from the README and keep the known-limitations list in sync.
 - Acceptance: every FR/NFR maps to code or a TODO ID; docs build/link checks
   pass; no undocumented reserved keys remain.
 

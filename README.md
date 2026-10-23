@@ -6,8 +6,8 @@ a first-class plugin system.
 
 FluxBar renders a native AppKit bar, exposes a JSON-RPC API over a Unix socket,
 and runs persistent plugins that speak line-delimited JSON-RPC over
-stdin/stdout. Everything can be changed live from the CLI without restarting the
-daemon.
+stdin/stdout. Items and most styling can be changed live from the CLI; some
+configuration and plugin-lifecycle changes require a daemon restart.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -62,17 +62,38 @@ fluxbar list --plugins
 
 fluxbar trigger build_finished --payload '{"job": 3}'
 
-fluxbar config path | init [--force] | validate | show
+fluxbar config path
+fluxbar config init [--force]
+fluxbar config validate
+fluxbar config show
+
 fluxbar plugin install github:user/repo
-fluxbar plugin install ./examples/plugins/hello --no-build
-fluxbar plugin install ./examples/plugins/hello --no-build --link  # development: keep sources in place
-fluxbar plugin list | restart hello | update hello | remove hello
+fluxbar plugin install ./examples/plugins/hello
+# or, for development, keep sources in place:
+fluxbar plugin install ./examples/plugins/hello --link
+fluxbar plugin list
+fluxbar plugin restart hello
+fluxbar plugin update hello
+fluxbar plugin remove hello
 fluxbar paths
 ```
 
 Global flags: `--socket <path>`, `--config <file>`, `-v/-vv/-vvv`.
 Environment variables: `FLUXBAR_SOCKET`, `FLUXBAR_CONFIG`, `FLUXBAR_CONFIG_DIR`
 and `RUST_LOG`.
+
+## Documentation
+
+- [docs/GUIDE_RU.md](docs/GUIDE_RU.md) — пошаговое руководство: первый запуск,
+  настройка панели, размещение и стилизация виджетов, создание Rust/Python
+  плагинов, итерация, события, IPC и отладка.
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — field reference for the TOML
+  configuration.
+- [docs/PLUGIN_GUIDE.md](docs/PLUGIN_GUIDE.md) — protocol, manifest, SDK and
+  installation reference.
+- [examples/config/full.toml](examples/config/full.toml) — a complete working
+  configuration.
+- [examples/plugins](examples/plugins) — Rust and Python plugin examples.
 
 ## Configuration
 
@@ -180,7 +201,15 @@ implementation status, including known gaps.
   grouping is supported.
 - Wasm and UDS plugin transports are reserved; stdio plugins are supported.
 - Brightness events are defined but not polled yet.
-- Blur radius is parsed but not applied; multi-display targeting is not wired.
+- Blur radius and `top_margin` are parsed but not applied; multi-display
+  targeting is not wired. `full_width = false` caps the bar at 1200 pt and
+  anchors it left.
+- Progress is a fixed white strip and may overlap item content; `max_width`
+  does not render an ellipsis yet.
+- Config reload is partial: remove items with `fluxbar remove`, toggle
+  `bar.hidden` with `bar_show`/`bar_hide`, and restart the daemon for timers,
+  system-monitor intervals or changed plugin specs. See the reload table in the
+  guide.
 - `plugin` mouse actions and item `script` polling are reserved.
 - Wasm sandboxing (v2) and a configurable theme file are on the roadmap.
 
