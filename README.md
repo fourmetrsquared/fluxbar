@@ -179,6 +179,9 @@ implementation status, including known gaps.
 - `plugin` mouse actions and item `script` polling are reserved.
 - Wasm sandboxing (v2) and a configurable theme file are on the roadmap.
 
+See [TODO.md](TODO.md) for the prioritized backlog of fixes, missing features,
+and modernization work.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

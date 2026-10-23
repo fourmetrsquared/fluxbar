@@ -50,3 +50,5 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
 - **v1.1:** menu-bar aliases, absolute positioning, brightness events, blur,
   multi-display targeting, script items, plugin-type mouse actions.
 - **v2:** Wasm sandbox, UDS transport, theme files, additional renderers.
+
+See [../TODO.md](../TODO.md) for the prioritized and actionable backlog.
