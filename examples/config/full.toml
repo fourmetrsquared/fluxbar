@@ -1,0 +1,165 @@
+# FluxBar — complete example configuration
+#
+# Copy to ~/.config/fluxbar/fluxbar.toml and adjust, or run:
+#   fluxbar config init
+#
+# Validate changes with:
+#   fluxbar config validate
+#
+# Reload a running daemon with:
+#   fluxbar trigger config_reload
+
+[bar]
+height = 32
+position = "top"
+background = "0xCC1E1E2E"
+corner_radius = 0
+blur_radius = 0
+top_margin = 0
+full_width = true
+item_spacing = 8
+padding = { top = 0, left = 10, bottom = 0, right = 10 }
+font = "SF Pro"
+font_size = 13
+foreground = "0xFFFFFFFF"
+
+[defaults]
+label_font_size = 13
+icon_font_size = 14
+label_padding = { top = 0, left = 4, bottom = 0, right = 4 }
+icon_padding = { top = 0, left = 4, bottom = 0, right = 4 }
+padding = { top = 0, left = 4, bottom = 0, right = 4 }
+
+# ---------------------------------------------------------------------------
+# Left group
+# ---------------------------------------------------------------------------
+
+[items.app]
+position = "left"
+icon = "◆"
+label = "FluxBar"
+label_color = "0xFF89B4FA"
+background = "0x33FFFFFF"
+background_corner_radius = 6
+background_padding = { top = 0, left = 6, bottom = 0, right = 6 }
+click_action = { type = "shell", command = "open -a Terminal" }
+
+[items.cpu]
+position = "left"
+kind = "cpu"
+icon = "▦"
+label = "--%"
+click_action = { type = "shell", command = "open -a Activity\\ Monitor" }
+
+[items.memory]
+position = "left"
+kind = "memory"
+icon = "▤"
+label = "--"
+
+# A plugin-managed item. See examples/plugins/hello.
+[items.hello]
+position = "center"
+kind = "text"
+label = "hello"
+plugin = "hello"
+
+[items.hello-graph]
+position = "center"
+kind = "graph"
+width = 90
+
+# ---------------------------------------------------------------------------
+# Center group
+# ---------------------------------------------------------------------------
+
+[items.media]
+position = "center"
+kind = "media"
+icon = "♪"
+label = ""
+width = 220
+max_width = 360
+
+# ---------------------------------------------------------------------------
+# Right group
+# ---------------------------------------------------------------------------
+
+[items.volume]
+position = "right"
+kind = "volume"
+icon = "◍"
+label = "--%"
+click_action = { type = "shell", command = "osascript -e 'set volume output muted not (output muted of (get volume settings))'" }
+scroll_action = { type = "trigger", event = "volume_scroll" }
+
+[items.battery]
+position = "right"
+kind = "battery"
+icon = "▮"
+label = "--%"
+
+[items.clock]
+position = "right"
+kind = "time"
+icon = "◷"
+label = "--:--"
+click_action = { type = "shell", command = "open -a Calendar" }
+
+# ---------------------------------------------------------------------------
+# Events and timers
+# ---------------------------------------------------------------------------
+
+[events.timers.second]
+interval = 1
+event = "tick"
+enabled = true
+
+[events.timers.slow]
+interval = 30
+event = "slow_tick"
+enabled = false
+
+[events.custom.volume_scroll]
+description = "Emitted when the user scrolls over the volume item"
+
+# ---------------------------------------------------------------------------
+# Animations
+# ---------------------------------------------------------------------------
+
+[animations]
+duration = 220
+easing = "ease_out_expo"
+disabled = false
+
+# ---------------------------------------------------------------------------
+# Built-in system monitor
+# ---------------------------------------------------------------------------
+
+[system]
+poll_interval = 2
+battery_interval = 30
+volume_interval = 5
+emit_system_events = true
+media = true
+space_command = "aerospace list-workspaces --focused"
+space_interval = 2
+
+# ---------------------------------------------------------------------------
+# Plugins
+# ---------------------------------------------------------------------------
+
+# Installed plugins are registered automatically in plugins.d/.
+# [plugins.hello]
+# type = "external"
+# command = "/absolute/path/to/hello"
+# subscribe = ["*"]
+# tick_interval = 2
+# auto_restart = true
+
+# ---------------------------------------------------------------------------
+# Modular includes (optional)
+# ---------------------------------------------------------------------------
+
+# include = ["themes/catppuccin.toml"]
+# include_dir = "plugins.d"

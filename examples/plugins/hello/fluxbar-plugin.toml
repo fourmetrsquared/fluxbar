@@ -1,0 +1,6 @@
+name = "hello"
+build = "cargo build --release"
+entry = "target/release/hello"
+subscribe = ["*"]
+tick_interval = 2
+description = "Minimal FluxBar plugin: updates the `hello` item every two seconds"

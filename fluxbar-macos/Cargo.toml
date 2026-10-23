@@ -1,0 +1,54 @@
+[package]
+name = "fluxbar-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "FluxBar native macOS renderer (AppKit)"
+
+[dependencies]
+fluxbar-core = { path = "../fluxbar-core" }
+tracing.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSString",
+    "NSGeometry",
+    "NSDictionary",
+    "NSAttributedString",
+    "NSArray",
+    "NSDate",
+    "NSRunLoop",
+    "NSThread",
+    "NSValue",
+    "NSObject",
+    "NSEnumerator",
+    "alloc",
+    "std",
+] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSWindow",
+    "NSView",
+    "NSResponder",
+    "NSGraphicsContext",
+    "NSColor",
+    "NSFont",
+    "NSBezierPath",
+    "NSAttributedString",
+    "NSStringDrawing",
+    "NSScreen",
+    "NSEvent",
+    "NSTrackingArea",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "std",
+] }
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+
+[lints]
+workspace = true

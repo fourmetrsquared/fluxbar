@@ -1,0 +1,6 @@
+name = "hello-python"
+build = ""
+entry = "plugin.py"
+subscribe = ["*"]
+tick_interval = 2
+description = "FluxBar plugin written in Python with no dependencies"

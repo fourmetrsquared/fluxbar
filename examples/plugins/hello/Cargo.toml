@@ -1,0 +1,17 @@
+[package]
+name = "fluxbar-plugin-hello"
+version = "0.1.0"
+edition = "2024"
+description = "Minimal FluxBar plugin demonstrating the SDK"
+
+[[bin]]
+name = "hello"
+path = "src/main.rs"
+
+[dependencies]
+fluxbar-sdk = { path = "../../../fluxbar-sdk" }
+tokio = { version = "1", features = ["rt", "macros"] }
+
+# Standalone workspace: this example mimics a plugin repository that a user
+# would install with `fluxbar plugin install`.
+[workspace]

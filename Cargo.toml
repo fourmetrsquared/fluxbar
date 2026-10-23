@@ -1,0 +1,79 @@
+[workspace]
+resolver = "2"
+members = [
+    "fluxbar-core",
+    "fluxbar-sdk",
+    "fluxbar-macos",
+    "fluxbar-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["FluxBar Contributors"]
+license = "MIT"
+repository = "https://github.com/fluxbar/fluxbar"
+description = "FluxBar: Next-Generation Status Bar in Rust"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+async-trait = "0.1"
+futures = "0.3"
+futures-util = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# Errors
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Utilities
+uuid = { version = "1.10", features = ["v4", "serde", "fast-rng"] }
+parking_lot = "0.12"
+dashmap = "6.1"
+chrono = { version = "0.4", features = ["serde"] }
+directories = "5.0"
+glob = "0.3"
+which = "7.0"
+sysinfo = "0.33"
+
+# Math & animation
+glam = "0.29"
+
+# Testing
+tempfile = "3.13"
+serial_test = "3.1"
+
+[profile.release]
+lto = "thin"
+opt-level = 3
+codegen-units = 4
+strip = "symbols"
+panic = "abort"
+
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

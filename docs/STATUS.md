@@ -1,0 +1,52 @@
+# Implementation status
+
+This page maps [REQUIREMENTS.md](REQUIREMENTS.md) to the current codebase.
+Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
+
+## Functional requirements
+
+| ID | Status | Notes |
+| --- | --- | --- |
+| FR-1.1 | ✅ | `item.add/set/remove/get/list` over JSON-RPC; CLI wrappers. No restart required. |
+| FR-1.2 | 🟡 | `left`/`center`/`right` groups and item ordering are supported. Absolute x positioning and explicit stacking are not exposed; `drawing_order` is parsed but not used by layout. |
+| FR-1.3 | ⬜ | Native menu-bar icon aliases are not implemented. |
+| FR-2.1 | 🟡 | Space (via `space_command`), app focus, volume, power/battery, media (opt-in) and CPU/memory events are emitted. `brightness_change` exists as an event type but has no poller. |
+| FR-2.2 | ✅ | `fluxbar trigger <name> --payload '<json>'`; names are validated. |
+| FR-2.3 | ✅ | `[events.timers.*]` with interval/event/payload/enabled, plus plugin `tick_interval`. |
+| FR-3.1 | 🟡 | Persistent stdio JSON-RPC plugins are fully implemented. UDS transport is reserved (config type accepted, only `external` is started). |
+| FR-3.2 | ⬜ | Wasm plugins are a v2 goal; no runtime/sandbox yet. |
+| FR-3.3 | ✅ | `fluxbar-sdk` with one required async method (`on_event`), optional `on_init`/`on_tick`/`on_shutdown`, and `run`/`run_blocking`. |
+| FR-3.4 | ✅ | `fluxbar plugin install github:user/repo`, git URLs and local paths; builds, resolves entry points, writes `plugins.d/<name>.toml`. |
+| FR-3.5 | ✅ | Process isolation per plugin, crash detection, exponential backoff capped at 60 s, configurable retries, stderr forwarding. |
+| FR-4.1 | ✅ | A single item can draw icon + label + progress + graph simultaneously. |
+| FR-4.2 | ✅ | Frame transitions interpolate bounds, label/icon/background/border colors, alpha/opacity, progress and corner radius using configurable duration + 30 easings. |
+| FR-4.3 | 🟡 | Vector line graphs are rendered from numeric arrays. Dedicated bar-chart mode is not exposed. |
+| FR-4.4 | ✅ | Click/right-click, scroll and enter/leave are delivered to the daemon, emit `mouse.*` events, and run shell/trigger bindings. `plugin`-type actions are reserved. |
+| FR-5.1 | ✅ | TOML configuration with validation and `fluxbar config` tooling. |
+| FR-5.2 | ✅ | Deep-merged `include` list and modular `plugins.d/*.toml`. |
+
+## Non-functional requirements
+
+| ID | Status | Notes |
+| --- | --- | --- |
+| NFR-1 | 🟡 | Event-driven design (no polling when idle apart from configured system intervals; clock wakes once per minute) and no repaint unless the frame version changes. A formal <0.5% idle CPU benchmark has not been added. |
+| NFR-2 | 🟡 | UI loop polls commands every 16 ms; IPC calls are handled immediately on the tokio runtime. No end-to-end latency benchmark yet. |
+| NFR-3 | ✅ | Slow event subscribers get a `Lagged` warning instead of blocking producers; plugin failures are isolated; invalid config/updates return errors. |
+| NFR-4 | 🟡 | `Renderer` is platform-independent and non-macOS builds run headless; Wasm sandboxing is not implemented. |
+
+## Definition of done
+
+| Item | Status |
+| --- | --- |
+| `cargo clippy --workspace --all-targets -- -D warnings` | ✅ clean |
+| `cargo fmt --all -- --check` | ✅ clean |
+| Unit tests for config parsing and IPC routing | ✅ (config includes/merging/timers/mouse actions, JSON-RPC roundtrip, handler routing, plugin protocol/backoff, layout/animations) |
+| Docs updated | ✅ README, configuration reference, plugin guide, status, examples, plugin authoring |
+
+## Milestones
+
+- **v1 (current):** native bar, items, events, stdio plugins, SDK, installer,
+  config includes, animations, mouse bindings, headless mode.
+- **v1.1:** menu-bar aliases, absolute positioning, brightness events, blur,
+  multi-display targeting, script items, plugin-type mouse actions.
+- **v2:** Wasm sandbox, UDS transport, theme files, additional renderers.
