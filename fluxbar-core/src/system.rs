@@ -5,16 +5,23 @@
 //! configurable intervals so the idle cost stays negligible.
 
 use crate::event::{Event, EventKind};
+use crate::script::read_capped;
 use crate::state::StateHandle;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::io;
+use std::process::Stdio;
 use std::time::Duration;
 use sysinfo::{MemoryRefreshKind, System};
 use tokio::process::Command;
 use tracing::debug;
 
+/// External system probes must never stall the whole monitor.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+const COMMAND_OUTPUT_LIMIT: usize = 64 * 1024;
+
 /// Configuration for the built-in monitor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SystemConfig {
     /// CPU / memory sampling interval in seconds.
@@ -200,17 +207,65 @@ impl SystemMonitor {
     }
 }
 
-async fn run_command(command: &str) -> Result<String, std::io::Error> {
-    let output = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(command)
-        .output()
-        .await?;
+#[derive(Debug)]
+struct CommandOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+async fn run_limited(program: &str, args: &[&str]) -> io::Result<CommandOutput> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("child stdout unavailable"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("child stderr unavailable"))?;
+
+    let result = tokio::time::timeout(COMMAND_TIMEOUT, async {
+        let result = tokio::try_join!(
+            read_capped(&mut stdout, COMMAND_OUTPUT_LIMIT),
+            read_capped(&mut stderr, COMMAND_OUTPUT_LIMIT)
+        );
+        if result.is_err() {
+            let _ = child.kill().await;
+        }
+        drop(stdout);
+        drop(stderr);
+        let status = child.wait().await?;
+        let (stdout_bytes, stderr_bytes) = result?;
+        Ok::<_, io::Error>((status, stdout_bytes, stderr_bytes))
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "command timed out"))?;
+
+    let (status, stdout, stderr) = result?;
+    Ok(CommandOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+async fn run_command(command: &str) -> io::Result<String> {
+    let output = run_limited("/bin/sh", &["-c", command]).await?;
     if !output.status.success() {
-        return Err(std::io::Error::other(format!(
-            "command exited with {}",
-            output.status
-        )));
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("command exited with {}", output.status)
+        } else {
+            format!("command exited with {}: {stderr}", output.status)
+        };
+        return Err(io::Error::other(detail));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -219,12 +274,7 @@ async fn run_osascript(script: &str) -> Option<String> {
     if !cfg!(target_os = "macos") {
         return None;
     }
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .await
-        .ok()?;
+    let output = run_limited("osascript", &["-e", script]).await.ok()?;
     output
         .status
         .success()
@@ -241,11 +291,7 @@ pub async fn battery_state() -> Option<(u8, bool)> {
     if !cfg!(target_os = "macos") {
         return None;
     }
-    let output = Command::new("pmset")
-        .args(["-g", "batt"])
-        .output()
-        .await
-        .ok()?;
+    let output = run_limited("pmset", &["-g", "batt"]).await.ok()?;
     if !output.status.success() {
         return None;
     }
@@ -331,5 +377,13 @@ mod tests {
         let snapshot = sample_system();
         assert!(snapshot.memory_total > 0);
         assert!(snapshot.cpu_percent >= 0.0);
+    }
+
+    #[tokio::test]
+    async fn output_cap_kills_flooding_command() {
+        let started = std::time::Instant::now();
+        let error = run_limited("/bin/sh", &["-c", "yes x"]).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }

@@ -5,7 +5,7 @@
 
 use fluxbar_core::error::{FluxError, Result};
 use fluxbar_core::geometry::Size;
-use fluxbar_core::renderer::{RenderFrame, Renderer};
+use fluxbar_core::renderer::{RenderFrame, Renderer, TextMetrics, estimate_text_width};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
@@ -32,7 +32,8 @@ pub enum UiEvent {
 pub struct MacRenderer {
     commands: Sender<UiCommand>,
     events: Mutex<Option<Receiver<UiEvent>>>,
-    size: Mutex<Size>,
+    screen: Mutex<Size>,
+    bar_height: Mutex<f64>,
 }
 
 impl MacRenderer {
@@ -42,7 +43,8 @@ impl MacRenderer {
         let renderer = Self {
             commands: command_tx,
             events: Mutex::new(Some(event_rx)),
-            size: Mutex::new(Size::new(width, height)),
+            screen: Mutex::new(Size::new(width, height)),
+            bar_height: Mutex::new(0.0),
         };
         (renderer, command_rx, event_tx)
     }
@@ -60,8 +62,8 @@ impl MacRenderer {
 
 impl Renderer for MacRenderer {
     fn render(&self, frame: &RenderFrame) -> Result<()> {
-        if let Ok(mut size) = self.size.lock() {
-            *size = Size::new(frame.bar_bounds.width(), frame.bar_bounds.height());
+        if let Ok(mut height) = self.bar_height.lock() {
+            *height = frame.bar_bounds.height();
         }
         self.send(UiCommand::Frame(Box::new(frame.clone())))
     }
@@ -71,14 +73,20 @@ impl Renderer for MacRenderer {
     }
 
     fn bar_height(&self) -> f64 {
-        self.size.lock().map(|size| size.height).unwrap_or(32.0)
+        self.bar_height.lock().map(|height| *height).unwrap_or(32.0)
     }
 
     fn screen_size(&self) -> Size {
-        self.size
+        self.screen
             .lock()
             .map(|size| *size)
             .unwrap_or(Size::new(1920.0, 1080.0))
+    }
+}
+
+impl TextMetrics for MacRenderer {
+    fn text_width(&self, text: &str, _font: Option<&str>, font_size: f64) -> f64 {
+        estimate_text_width(text, font_size)
     }
 }
 

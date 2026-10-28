@@ -1,0 +1,19 @@
+[package]
+name = "fluxbar-plugin-workspaces"
+version = "0.1.0"
+edition = "2024"
+description = "yabai/AeroSpace desktops as clickable FluxBar tiles"
+
+[[bin]]
+name = "fluxbar-plugin-workspaces"
+path = "src/main.rs"
+
+[dependencies]
+fluxbar-sdk = { path = "../../../fluxbar-sdk" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["io-util", "process", "rt", "macros"] }
+
+# Standalone workspace: this example mimics a plugin repository that a user
+# would install with `fluxbar plugin install`.
+[workspace]

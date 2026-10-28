@@ -39,16 +39,22 @@ objc2-app-kit = { version = "0.3", features = [
     "NSFont",
     "NSBezierPath",
     "NSAttributedString",
+    "NSParagraphStyle",
     "NSStringDrawing",
     "NSScreen",
     "NSEvent",
     "NSTrackingArea",
+    "NSVisualEffectView",
+    "NSGradient",
     "objc2-core-foundation",
     "objc2-core-graphics",
+    "objc2-quartz-core",
     "std",
 ] }
 objc2-core-foundation = "0.3"
 objc2-core-graphics = "0.3"
+objc2-core-text = { version = "0.3", features = ["CTLine"] }
+objc2-quartz-core = { version = "0.3", features = ["CALayer"] }
 
 [lints]
 workspace = true

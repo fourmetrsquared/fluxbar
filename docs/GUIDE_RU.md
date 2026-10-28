@@ -4,10 +4,13 @@
 плагинов. Оно дополняет справочники:
 
 - [CONFIGURATION.md](CONFIGURATION.md) — полный список полей конфигурации;
-- [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md) — протокол плагинов и SDK;
+- [PLUGIN_GUIDE.md](PLUGIN_GUIDE.md) — протокол плагинов, SDK, скрипты,
+  совместимость со SketchyBar и плагин рабочих столов;
 - [examples/config/full.toml](../examples/config/full.toml) — большой пример;
 - [examples/plugins/hello](../examples/plugins/hello) и
-  [hello-python](../examples/plugins/hello-python) — рабочие примеры.
+  [hello-python](../examples/plugins/hello-python) — рабочие примеры;
+- [examples/plugins/workspaces](../examples/plugins/workspaces) — плитки
+  рабочих столов для yabai и AeroSpace.
 
 Команды ниже предполагают, что `fluxbar` установлен в `PATH` (`./build.sh
 install`) или запускается через `./build.sh run`. Если бинарник ещё не
@@ -32,7 +35,7 @@ install`) или запускается через `./build.sh run`. Если б
 ### 1.1. Сборка и установка
 
 ```bash
-git clone <repo> fluxbar
+git clone https://github.com/fluxbar/fluxbar.git fluxbar
 cd fluxbar
 
 ./build.sh install          # release-сборка в ~/.local/bin/fluxbar
@@ -58,12 +61,16 @@ fluxbar paths
 | Исходники установленных плагинов | `~/.config/fluxbar/plugins/` |
 | Регистрации плагинов | `~/.config/fluxbar/plugins.d/*.toml` |
 | Unix-сокет IPC | `~/Library/Caches/dev.fluxbar.fluxbar/fluxbar.sock` |
+| PID-файл | `~/Library/Caches/dev.fluxbar.fluxbar/fluxbar.pid` (рядом с сокетом) |
 
 Путь конфигурации учитывает `XDG_CONFIG_HOME`, `FLUXBAR_CONFIG_DIR` и флаг
 `--config` (или переменную `FLUXBAR_CONFIG`). Путь сокета можно переопределить
 через `--socket` или `FLUXBAR_SOCKET`. При запуске без явного `--config` FluxBar
 сам создаёт `fluxbar.toml`, `plugins/` и `plugins.d/`, если их нет. Существующий
-конфиг не перезаписывается.
+конфиг не перезаписывается. Рядом с сокетом daemon держит заблокированный
+PID-файл `0600`; второй экземпляр с тем же сокетом не запустится, а оставшийся
+после падения PID-файл будет переиспользован. `SIGINT`, `SIGTERM` и
+`fluxbar stop` завершают таймеры, плагины и UI штатно.
 
 ### 1.2. Проверка и перезагрузка
 
@@ -71,11 +78,13 @@ fluxbar paths
 fluxbar config path
 fluxbar config validate
 fluxbar config show
-fluxbar trigger config_reload
+fluxbar config reload
 ```
 
 `config validate` проверяет TOML, includes, таймеры и основные ограничения.
-`config_reload` полезен, но применяет не всё: подробная таблица — в разделе
+`fluxbar config reload` сначала полностью валидирует новый файл, затем
+атомарно применяет items, плагины, таймеры, монитор и видимость панели.
+Подробная таблица — в разделе
 [«Что применяется при reload»](#9-что-применяется-при-reload). Если поведение
 не изменилось, перезапустите daemon:
 
@@ -138,7 +147,7 @@ label = "--:--"
 
 ```bash
 fluxbar config validate
-fluxbar trigger config_reload
+fluxbar config reload
 ```
 
 ### 2.2. Геометрия и внешний вид
@@ -149,8 +158,12 @@ height = 36                  # 0..256 pt
 position = "top"             # "top" или "bottom"
 background = "0xCC1E1E2E"    # 0xAARRGGBB: alpha идёт первой
 corner_radius = 10
+opacity = 1.0                # 0..1, влияет только на alpha фона панели
+blur_radius = 18             # 0 = выключено; >0 включает нативный blur
 item_spacing = 8
 padding = { top = 0, left = 12, bottom = 0, right = 12 }
+top_margin = 6               # отступ от верхнего/нижнего края
+horizontal_margin = 12       # боковые отступы: плавающая капсула по центру
 full_width = true
 font = "SF Pro"
 font_size = 13
@@ -163,12 +176,22 @@ icon_font = "JetBrainsMono Nerd Font"
 `blue`, `yellow`, `orange`, `purple`, `pink`, `gray`).
 
 `padding` — внутренние отступы панели. `item_spacing` — расстояние между
-соседними виджетами одной группы. `full_width = true` растягивает панель на
-экран; при `false` ширина ограничивается 1200 pt.
+соседними виджетами одной группы. `top_margin` задаёт зазор между видимой
+границей экрана и панелью сверху или снизу. `horizontal_margin` оставляет
+одинаковые поля слева и справа; при значении больше нуля панель становится
+плавающей капсулой по центру. `full_width = true` занимает всю доступную
+ширину (экран минус боковые поля), при `false` ширина дополнительно
+ограничивается 1200 pt. В обоих случаях панель центрируется.
 
-> `top_margin` и `blur_radius` сейчас разбираются конфигом, но нативное
-> размещение/размытие их не применяет. Не используйте их как рабочие настройки
-> до исправления в backlog.
+`opacity` умножается на alpha фона `background`; цвета item-ов и текста не
+меняются. `blur_radius` включает нативное размытие за панелью. На macOS 26
+используется системный `NSGlassEffectView`: он даёт настоящую Liquid Glass
+деформацию и преломление по границам, а также подстраивает материал под фон.
+Внутренняя тёмная заливка рисуется с отступом, поэтому стеклянная кромка
+остаётся видимой. На более старых версиях macOS используется
+`NSVisualEffectView` с семантическими уровнями (`1–8` — мягкий, `9–24` —
+средний, больше `24` — сильный) и нарисованные вручную блик, кромка и
+затемнение снизу.
 
 ### 2.3. Стили по умолчанию
 
@@ -215,15 +238,16 @@ include_dir = "plugins.d"
 
 ```toml
 [animations]
-duration = 220
-easing = "ease_out_expo"
+duration = 480
+easing = "spring"
 disabled = false
 ```
 
 Анимации интерполируют границы виджетов, цвета текста/фона/рамки, progress и
 радиус панели. Доступны `linear`, `ease_in_*`, `ease_out_*`,
 `ease_in_out_*` для quad/cubic/quart/quint/sine/circ/expo/back/elastic/bounce,
-а также `ease_in_out_expo` (по умолчанию). Чтобы отключить анимации полностью:
+`ease_in_out_expo` (по умолчанию) и `spring` — пружинная кривая с небольшим
+overshoot, похожая на анимации UIKit. Чтобы отключить анимации полностью:
 
 ```toml
 [animations]
@@ -245,9 +269,9 @@ fluxbar trigger bar_show
 fluxbar trigger bar_hide
 ```
 
-`bar.hidden` применяется при старте. Изменение `hidden` в конфиге через
-`config_reload` не переключает уже запущенную панель — используйте
-`bar_show`/`bar_hide` или перезапуск.
+`bar.hidden` применяется при старте и при `fluxbar config reload` — daemon
+показывает или скрывает панель без перезапуска. Вручную панелью можно
+управлять событиями `bar_show`/`bar_hide`.
 
 ## 3. Виджеты
 
@@ -357,7 +381,7 @@ label = "--:--"
 
 ```bash
 fluxbar config validate
-fluxbar trigger config_reload
+fluxbar config reload
 ```
 
 4. Если хотите изменить размещение без правки файла:
@@ -388,6 +412,9 @@ icon_padding = { top = 0, left = 4, bottom = 0, right = 2 }
 padding = { top = 0, left = 4, bottom = 0, right = 4 }
 background = "0x33FFFFFF"
 background_corner_radius = 6
+background_shape = "rounded"       # rectangle | rounded | circle
+background_blur_radius = 12        # отдельный blur под этим item
+opacity = 0.9                      # текст, иконка, фон и рамка
 background_padding = { top = 0, left = 6, bottom = 0, right = 6 }
 border_color = "0x44FFFFFF"
 border_width = 1
@@ -402,12 +429,25 @@ width = 96
 - `align` выравнивает содержимое внутри коробки: `left`, `center`, `right`;
 - `background_padding` вставляет фон внутрь коробки;
 - `background_height` задаёт высоту фона вручную;
-- рамка рисуется по границам коробки виджета;
-- `max_width` пока не делает ellipsis для длинного текста — он может
-  обрезаться или не помещаться в коробку; подбирайте ширину вручную;
-- ширина текста в core оценивается эвристикой, а AppKit измеряет её отдельно
-  и тоже не всегда точно. Для плотных панелей задавайте фиксированные `width`,
-  чтобы избежать неожиданных пересечений.
+- `background_shape = "rectangle"` убирает скругление, `"rounded"` использует
+  `background_corner_radius`, `"circle"` рисует эллипс (для круга сделайте
+  item квадратным);
+- `background_blur_radius` включает отдельное нативное стекло под фоном
+  item-а; на macOS 26 это `NSGlassEffectView` с настоящей деформацией кромки,
+  на старых системах — `NSVisualEffectView`; `0` выключает его;
+- `opacity` применяется ко всему item-у: текст, иконка, фон, рамка и progress;
+- `progress_color`/`progress_track_color` задают цвета заливки и трека,
+  `progress_height` — высоту полосы, `progress_position` — `bottom`, `top` или
+  `background`; для `top`/`bottom` содержимое автоматически сдвигается и не
+  перекрывается с progress;
+- рамка рисуется по границам фона с учётом `background_padding`; на macOS 26
+  у размытых item-ов внешнюю кромку рисует системное Liquid Glass, поэтому
+  `border_color`/`border_width` для них не используются;
+- на macOS ширина текста измеряется настоящими метриками CoreText с учётом
+  `label_font`/`icon_font` и размера, поэтому коробка item-а и отрисованный
+  текст совпадают;
+- если содержимое не помещается в `width`/`max_width`, сначала сжимается
+  label, затем icon; длинный label обрезается многоточием в конце.
 
 ### 3.5. Шаг за шагом: встроенные системные виджеты
 
@@ -495,11 +535,23 @@ out.set_progress("demo", "Hello #42", 42.0)
   график сам масштабируется по min/max;
 - `graph` рисуется только у item с `kind = "graph"`; его цвет берётся из
   `label_color` (отдельного цвета графика нет);
-- progress рисуется у любого item, у которого заполнено поле `progress`
-  (сейчас это тонкая белая полоса внизу виджета; она может перекрывать
-  содержимое);
-- чтобы обновление сработало, item уже должен существовать. Плагин не создаёт
-  новые item-ы, он только обновляет существующие.
+- progress рисуется у любого item, у которого заполнено поле `progress`.
+  Цвет, высоту и положение можно задать в конфигурации:
+
+  ```toml
+  [items.cpu]
+  progress_color = "0xFF34C759"
+  progress_track_color = "0x3334C759"
+  progress_height = 3
+  progress_position = "bottom" # "top" или "background"
+  ```
+
+  `top`/`bottom` резервируют отдельную полосу, поэтому progress не
+  перекрывает иконку, текст и график. `background` рисует заливку позади
+  содержимого. Цвет по умолчанию наследуется от `label_color`;
+- чтобы обновление сработало, item уже должен существовать. JSON-RPC-плагин
+  обновляет только существующие item-ы; скриптовый плагин может создать их
+  через `sketchybar --add item`.
 
 ### 3.7. Шаг за шагом: действия мыши
 
@@ -540,7 +592,30 @@ scroll_action = { type = "trigger", event = "volume_scroll", payload = { delta =
 payload действия; фактический `delta` колеса приходит только в событии
 `mouse.scrolled`.
 
-### 3.8. Runtime-команды
+### 3.8. Item-скрипты
+
+Item может сам запускать shell-команду по событию или по таймеру:
+
+```toml
+[items.weather]
+position = "right"
+label = "--"
+script = "~/.config/fluxbar/scripts/weather.sh"
+subscribe = ["system_woke", "weather_refresh"]
+update_interval = 300
+click_script = "open -a Weather"
+```
+
+`script` по умолчанию выполняется через `/bin/sh`; путь с расширением
+`.bash` запускается через `/bin/bash`, а `.lua` — через `lua`. При старте
+daemon каждый item-скрипт выполняется один раз для инициализации. `subscribe`
+задаёт события, а `update_interval` — период `routine`-запусков. Скрипт должен
+напечатать JSON с
+обновлением (`{"weather":{"label":"19°"}}`) или вызвать
+`sketchybar --set weather label=...`. `click_script` выполняется только при
+клике по этому item-у. Обычный текст stdout игнорируется, таймаут — 60 секунд.
+
+### 3.9. Runtime-команды
 
 ```bash
 fluxbar add weather --kind text --position right --label "18°" --icon "☀"
@@ -567,37 +642,59 @@ fluxbar list
 - `position=left|center|right`
 - `kind=...`
 
+Стили (цвета, фон, `background.shape`, `opacity`, шрифты) меняются через
+совместимую команду, например:
+
+```bash
+fluxbar sketchybar --set weather background.color=0x663A6EA5 opacity=0.8
+```
+
 Runtime-изменения живут в памяти. Чтобы они сохранились после перезапуска,
 перенесите их в `fluxbar.toml`. `fluxbar add` не записывает item в конфиг.
 `graph` отображается только у item с `kind = "graph"`, поэтому в примере выше
 для графика нужно сначала выполнить `fluxbar set weather kind=graph`.
 
-### 3.9. Готовый пример панели
+### 3.10. Готовый пример панели: Liquid Glass
 
 ```toml
 [bar]
-height = 34
+height = 44
 position = "top"
-background = "0xE61E1E2E"
-corner_radius = 10
+background = "0x2E0A0A0F"     # тёмное стекло, alpha идёт первой
+corner_radius = 18
+blur_radius = 22              # включает нативный blur + блик и рамку
 item_spacing = 8
 padding = { top = 0, left = 12, bottom = 0, right = 12 }
+top_margin = 6                # зазор между меню-баром и капсулой
+horizontal_margin = 12        # поля слева и справа
+full_width = true
 font = "SF Pro"
-font_size = 13
-foreground = "0xFFCDD6F4"
+font_size = 14
+foreground = "0xFFFFFFFF"
 
+# Все item-ы по умолчанию — стеклянные капсулы. background_height = 30 и
+# background_padding.bottom = 7 центрируют капсулу в панели высотой 44.
 [defaults]
-label_padding = { top = 0, left = 4, bottom = 0, right = 4 }
+label_font_size = 13
+icon_font_size = 14
+label_color = "0xE6FFFFFF"
+icon_color = "0xE6FFFFFF"
+label_padding = { top = 0, left = 5, bottom = 0, right = 5 }
 icon_padding = { top = 0, left = 4, bottom = 0, right = 4 }
-padding = { top = 0, left = 4, bottom = 0, right = 4 }
+padding = { top = 0, left = 9, bottom = 0, right = 9 }
+background = "0x1FFFFFFF"
+background_corner_radius = 13
+background_blur_radius = 14
+background_height = 30
+background_padding = { top = 0, left = 0, bottom = 7, right = 0 }
+border_color = "0x26FFFFFF"
+border_width = 1
 
 [items.app]
 position = "left"
 icon = "◆"
 label = "FluxBar"
-background = "0x33FFFFFF"
-background_corner_radius = 6
-background_padding = { top = 0, left = 6, bottom = 0, right = 6 }
+label_color = "0xFFFFFFFF"
 click_action = { type = "shell", command = "open -a Terminal" }
 
 [items.cpu]
@@ -645,8 +742,8 @@ event = "tick"
 enabled = true
 
 [animations]
-duration = 220
-easing = "ease_out_expo"
+duration = 480
+easing = "spring"             # пружина в духе UIKit
 
 [system]
 poll_interval = 2
@@ -661,22 +758,24 @@ media = false
 
 ## 4. Плагины: основные понятия
 
-Плагин — это отдельный долгоживущий процесс. FluxBar запускает его один раз и
-обменивается с ним JSON-RPC 2.0 по одной строке на сообщение:
+FluxBar поддерживает два вида плагинов.
+
+**JSON-RPC-плагин** — отдельный долгоживущий процесс. FluxBar запускает его
+один раз и обменивается сообщениями JSON-RPC 2.0 по одной строке:
 
 - stdin — запросы от FluxBar;
 - stdout — ответы плагина (только JSON, по одной строке);
 - stderr — диагностика, попадает в лог daemon.
 
-Плагин умеет:
+Такой плагин обновляет существующие item-ы (`label`, `icon`, `progress`,
+`graph`, `status`, `visible`, `position`, `kind`), отправляет события в шину и
+пишет лог. Через протокол он не создаёт item-ы: их нужно объявить в конфиге
+или создать через `fluxbar add`.
 
-- обновлять существующие item-ы (`label`, `icon`, `progress`, `graph`,
-  `status`, `visible`, `position`, `kind`);
-- отправлять события в общую шину;
-- писать лог.
-
-Плагин **не умеет** создавать новые item-ы через протокол. Item нужно заранее
-объявить в конфиге или создать через `fluxbar add`.
+**Плагин-скрипт** (`sh`, `bash`, `lua`) запускается на каждое событие и тик.
+Он может печатать JSON-обновление или вызывать совместимый CLI `sketchybar`.
+Через `sketchybar --add item` скрипт может создавать и удалять item-ы
+самостоятельно — так работает плагин рабочих столов.
 
 ### 4.1. Регистрация плагина
 
@@ -688,6 +787,11 @@ fluxbar plugin install ./my-plugin
 fluxbar plugin install ./my-plugin --no-build
 fluxbar plugin install ./my-plugin --link
 ```
+
+> **Безопасность:** плагин, его `build`-команда, item-скрипты и действия мыши
+> выполняются с правами вашего пользователя. Устанавливайте только доверенные
+> плагины. Если в репозитории есть `build`, сначала просмотрите его или
+> используйте `--no-build`. Подробности — в [SECURITY.md](../SECURITY.md).
 
 Установщик создаёт `~/.config/fluxbar/plugins.d/<name>.toml`:
 
@@ -705,12 +809,13 @@ auto_restart = true
 | Поле | Значение |
 | --- | --- |
 | `type` | `external` (stdio); `uds`, `wasm`, `builtin` зарезервированы |
+| `runtime` | `jsonrpc`, `sh`, `bash` или `lua`; иначе определяется по расширению |
 | `command` | исполняемый файл |
 | `args` | дополнительные аргументы |
 | `path` | альтернатива `command` |
 | `env` | переменные окружения |
 | `working_dir` | рабочая директория процесса |
-| `subscribe` | список событий; `["*"]` — все |
+| `subscribe` | список событий; `["*"]` — все, кроме внутренних `item_*` |
 | `tick_interval` | период `tick` в секундах |
 | `auto_restart` | перезапускать после падения |
 | `max_restarts` | лимит перезапусков (`0` — без лимита) |
@@ -739,6 +844,7 @@ name = "my-plugin"
 description = "What it does"
 build = "cargo build --release"       # необязательно
 entry = "target/release/my-plugin"    # относительно корня плагина
+runtime = "jsonrpc"                   # jsonrpc | sh | bash | lua
 subscribe = ["tick", "my_event"]
 tick_interval = 2
 ```
@@ -750,18 +856,26 @@ tick_interval = 2
 | `Cargo.toml` | `cargo build --release` | `target/release/<package>` |
 | `package.json` | `npm install` | `index.js` |
 | `main.py` | нет | `main.py` |
+| одиночный `.sh` / `.bash` / `.lua` | нет | сам файл |
 
 Если `entry` заканчивается на `.py`, установщик регистрирует `python3` +
 путь к скрипту. Если на `.js` — `node` + путь. Можно также указать строку
-`entry = "python3 plugin.py"`.
+`entry = "python3 plugin.py"`. Одиночный shell/Lua-файл устанавливается через
+`fluxbar plugin install ./tick.sh --no-build`; runtime определяется
+автоматически.
 
 ### 4.3. Жизненный цикл
 
 1. FluxBar запускает процесс.
-2. Отправляет `init` с `name`, `config`, `subscribe`, `version`.
+2. Отправляет `init` с `name`, `config`, `subscribe`, `version`. Ошибка `init`
+   считается падением запуска и запускает обычную restart-политику; плагин не
+   остаётся в состоянии running.
 3. Отправляет `event` для подписанных событий и `tick` каждые
-   `tick_interval` секунд.
+   `tick_interval` секунд. `plugin.notify` доставляет событие только указанному
+   плагину, минуя подписки.
 4. При остановке отправляет `shutdown` и ждёт завершения (с таймаутом).
+   `max_restarts` считает подряд идущие падения и сбрасывается после 60 секунд
+   стабильной работы.
 
 Плагин должен отвечать на каждый запрос строкой JSON с тем же `id`. Ответ на
 `event` может содержать:
@@ -788,6 +902,173 @@ Host также выставляет процессу переменные `FLUX
 Таймаут ответа на `event` — 10 секунд; он считается падением плагина и
 запускает restart-политику. stdout нельзя использовать для отладочных
 сообщений: только JSON-ответы. Для отладки пишите в stderr.
+
+### 4.4. Плагины-скрипты: sh, bash и Lua
+
+Скриптовый плагин не держит процесс и не говорит на JSON-RPC. FluxBar запускает
+его для `plugin_started`, для каждого события из `subscribe` и для каждого
+`tick_interval`. Регистрация:
+
+```toml
+[plugins.clock_script]
+type = "external"
+runtime = "sh"
+command = "~/.config/fluxbar/plugins/clock-script/tick.sh"
+subscribe = ["space_change"]
+tick_interval = 1
+```
+
+Если `runtime` не указан, он определяется по `.sh`, `.bash`, `.lua` или по
+интерпретатору в `command`/`args`. Для Lua нужен `lua` в `PATH`, для sh
+используется `/bin/sh`, для bash — `/bin/bash`.
+
+Скрипт получает переменные `NAME`, `SENDER`, `INFO`, `CONFIG_DIR`,
+`FLUXBAR_SOCKET`, `FLUXBAR_BIN`, `SKETCHYBAR` и `PATH` с каталогом shim-ов
+`<config-dir>/bin`. Есть два способа обновить панель.
+
+Первый — напечатать JSON:
+
+```sh
+#!/bin/sh
+printf '{"clock_script":{"label":"%s"}}\n' "$(date +%H:%M)"
+```
+
+Второй — вызвать `sketchybar`, как это делают плагины SketchyBar:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+sketchybar --set clock_script label="$(date +%H:%M)" icon="◷"
+```
+
+Пример на Lua:
+
+```lua
+#!/usr/bin/env lua
+io.write(string.format('{"clock_script":{"label":"%s"}}\n', os.date("%H:%M")))
+```
+
+Обычный текст в stdout игнорируется. Если скрипт печатает JSON, это должен быть
+объект с обновлениями item-ов или полный ответ `PluginResult` с полями
+`updates`, `events`, `log`. Wildcard `subscribe = ["*"]` не получает
+внутренние события `item_*`, чтобы скрипт, меняющий item через `sketchybar
+--set`, не зациклился.
+
+### 4.5. Плагин рабочих столов (yabai и AeroSpace)
+
+Готовый плагин лежит в
+[examples/plugins/workspaces](../examples/plugins/workspaces). Он показывает
+по одному item-у на каждый существующий рабочий стол и сам добавляет/удаляет
+плитки при изменении их количества. На плитке — номер стола и до трёх
+символов имени (`1 web`); активный стол рисуется чуть ярче остальных. Клик
+переключает рабочий стол.
+
+macOS не даёт публичного API для обнаружения и переключения Mission Control,
+поэтому плагин опрашивает оконный менеджер: yabai (нативные Spaces) или
+AeroSpace (его workspace-ы). `backend = "auto"` сначала пробует yabai, затем
+AeroSpace.
+
+#### yabai
+
+```bash
+brew install koekeishiya/formulae/yabai
+brew services start yabai
+cargo build --release --manifest-path examples/plugins/workspaces/Cargo.toml
+fluxbar plugin install examples/plugins/workspaces --no-build
+```
+
+У нативных Spaces нет имён. Задайте label в yabai или сопоставьте номер стола
+с именем в `names`:
+
+```bash
+yabai -m space 1 --label web
+```
+
+Для переключения по клику нужно scripting addition yabai.
+
+#### AeroSpace
+
+```bash
+brew install --cask nikitabobko/tap/aerospace
+cargo build --release --manifest-path examples/plugins/workspaces/Cargo.toml
+fluxbar plugin install examples/plugins/workspaces --no-build
+```
+
+Номер — позиция workspace в `aerospace list-workspaces`, имя — имя workspace
+(его можно переопределить в `names`). Новые окна переносятся по явным правилам
+через `aerospace move-node-to-workspace`.
+
+Добавьте регистрацию и настройки в `fluxbar.toml` или `plugins.d/workspaces.toml`:
+
+```toml
+[plugins.workspaces]
+type = "external"
+command = "/Users/you/.config/fluxbar/plugins/workspaces/target/release/fluxbar-plugin-workspaces"
+subscribe = []
+tick_interval = 1
+auto_restart = true
+
+[plugins.workspaces.config]
+# auto: сначала yabai, если его демон отвечает, затем AeroSpace.
+backend = "auto"          # auto | yabai | aerospace
+all_monitors = true
+icon = ""                 # необязательно; номер уже входит в label
+background = "0x1FFFFFFF"
+selected_background = "0x52FFFFFF"
+visible_background = "0x2EFFFFFF"
+foreground = "0xC6FFFFFF"
+selected_foreground = "0xFFFFFFFF"
+opacity = 1.0
+blur_radius = 14
+corner_radius = 13
+shape = "rounded"
+width = 64
+tile_height = 30
+padding_left = 4
+padding_right = 4
+move_existing = false
+
+# Короткие имена: ключ — имя workspace (AeroSpace) либо label/номер (yabai).
+[plugins.workspaces.config.names]
+"1" = "web"
+"2" = "term"
+"3" = "chat"
+
+[plugins.workspaces.config.icons]
+"1" = "W"
+"2" = "T"
+
+[plugins.workspaces.config.colors]
+"2" = "0x663A6EA5"
+
+# Полные переопределения для одной плитки; остальные поля берутся из глобальных.
+[plugins.workspaces.config.tiles."2"]
+icon = "T"
+color = "0x663A6EA5"
+opacity = 0.65
+blur_radius = 0
+shape = "rectangle"
+corner_radius = 0
+width = 56
+tile_height = 24
+
+# Только для AeroSpace: bundle id или имя приложения -> workspace.
+[plugins.workspaces.config.rules]
+"com.apple.Safari" = "2"
+"com.apple.Terminal" = "3"
+```
+
+`names`, `icons`, `colors` и `tiles` используют имя workspace (AeroSpace) или
+label/номер стола (yabai) как ключ. Имя обрезается до трёх символов; числовое
+имя не дублируется. `color`/`foreground` из `tiles` перекрывают и
+выбранное/видимое состояние. В `rules` допустимы простые `*`-шаблоны; правила
+сейчас работают только с AeroSpace. Новые окна опрашиваются примерно раз в
+секунду; `move_existing = true` применяет правила и к уже открытым окнам при
+старте.
+
+Сгенерированные имена item-ов хранятся в `<config-dir>/workspaces.items` и
+удаляются при следующем запуске, если стол исчез. Не объявляйте item-ы
+`workspace.*` вручную.
 
 ## 5. Пишем Rust-плагин с нуля
 
@@ -951,7 +1232,7 @@ width = 90
 
 Если daemon уже запущен, установщик вызывает `config.reload`, чтобы запустить
 сам плагин. Item-ы, добавленные в конфиг **после** установки, подхватит
-следующий `fluxbar trigger config_reload`. Можно создать их и в runtime:
+следующий `fluxbar config reload`. Можно создать их и в runtime:
 
 ```bash
 fluxbar add demo --kind text --position center --label "demo"
@@ -967,10 +1248,10 @@ fluxbar list --plugins
 fluxbar trigger refresh --payload '{"reason":"manual"}'
 ```
 
-В `fluxbar list --plugins` плагин должен быть в состоянии `RUNNING = true`.
-Если он падает, смотрите stderr в логе daemon и `last_error` в ответе
-JSON-RPC-метода `plugin.list` (CLI-таблица показывает только имя, running,
-restarts и pid).
+В `fluxbar list --plugins` у плагина должно быть `STATE = running` и
+`RUNNING = true`. Явные состояния: `starting`, `running`, `backoff`,
+`stopped`, `failed`. Если плагин падает, смотрите stderr в логе daemon и
+`last_error` в ответе JSON-RPC-метода `plugin.list`.
 
 ## 6. Пишем плагин на Python
 
@@ -1086,7 +1367,7 @@ width = 140
 ```
 
 ```bash
-fluxbar trigger config_reload
+fluxbar config reload
 fluxbar list --plugins
 ```
 
@@ -1147,17 +1428,19 @@ fluxbar plugin restart demo
 ### 7.4. Изменение настроек плагина
 
 Регистрация и spec плагина (`subscribe`, `tick_interval`, `config`, `env`,
-`working_dir`, `command`) читаются при старте. `config_reload` запускает
-**только новые** плагины; уже работающий плагин сохраняет старый spec.
+`working_dir`, `command`) читаются при старте и сверяются при
+`fluxbar config reload`. Если spec не изменился, процесс продолжает работать;
+изменённый плагин перезапускается с новым spec, новый — запускается, удалённый
+— штатно останавливается.
 
 Поэтому:
 
 - изменения кода → `cargo build` + `plugin update` (если копия) +
   `plugin restart`;
-- изменения `[plugins.<name>]`/`plugins.d/*.toml` → перезапуск daemon:
-  `fluxbar stop && fluxbar start`;
-- изменения `[plugins.<name>.config]` тоже требуют перезапуска daemon:
-  `plugin restart` берёт сохранённый старый spec и не перечитывает конфиг.
+- изменения `[plugins.<name>]`/`plugins.d/*.toml` → `fluxbar config reload`
+  (валидированный reload перезапускает изменённый spec, запускает новые и
+  останавливает удалённые плагины);
+- `plugin restart` не перечитывает конфиг и берёт уже загруженный spec.
 
 ### 7.5. Удаление и обновление
 
@@ -1169,8 +1452,8 @@ fluxbar plugin remove demo
 
 - `remove` удаляет регистрацию и установленную копию;
 - при `--link` исходный каталог остаётся;
-- если плагин запущен, после удаления регистрации перезапустите daemon, чтобы
-  процесс точно завершился.
+- `fluxbar config reload` останавливает удалённый плагин без перезапуска
+  daemon.
 
 ## 8. События, таймеры и IPC
 
@@ -1262,32 +1545,42 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
 `item.list`, `event.trigger`, `config.reload`, `plugin.list`,
 `plugin.restart`, `bar.show`, `bar.hide`, `system.status`.
 
+Сокет создаётся с правами `0600`, а стандартная директория сокета — с правами
+`0700`. Любой процесс, работающий от вашего пользователя, всё равно может
+управлять панелью; не используйте `--socket` в общедоступной директории вроде
+`/tmp`. Одно сообщение ограничено 1 MiB, число одновременных подключений и
+время простоя также ограничены. Плагины и скрипты — это код с правами вашего
+пользователя; см. [SECURITY.md](../SECURITY.md).
+
 ## 9. Что применяется при reload
 
-`fluxbar trigger config_reload` — не полный перезапуск. Текущее поведение:
+`fluxbar config reload` (и `fluxbar trigger config_reload`, и JSON-RPC
+`config.reload`) сначала полностью валидирует новый файл, затем применяет его
+одной операцией. Если валидация не прошла, live-состояние не меняется.
 
-| Изменение | `config_reload` | Надёжный способ |
-| --- | --- | --- |
-| Фон, высота, padding, spacing, corner radius, position панели | применяется | reload |
-| Новые item-ы | добавляются | reload |
-| Стили существующих item-ов (цвета, ширина, padding) | частично применяются | reload, при сомнении restart |
-| `kind`/`position` существующего item | не применяется | restart |
-| `visible` существующего item | не применяется к runtime-состоянию | `fluxbar set <name> visible=...` или restart |
-| Статический `label`/`icon` существующего item | может не обновиться | restart |
-| Удаление item из конфига | item остаётся | `fluxbar remove <name>` |
-| `[defaults]` | только новые item-ы | restart |
-| Новые плагины | запускаются | reload |
-| Изменённые/удалённые плагины | не перезапускаются/не останавливаются | restart daemon |
-| Таймеры и `[system]` | не пересоздаются | restart daemon |
-| `bar.hidden` | не применяется | `bar_show`/`bar_hide` или restart |
-| `top_margin` | не применяется (баг нативной раскладки) | пока не реализовано |
-| `blur_radius` | не применяется | пока не реализовано |
+| Изменение | `config_reload` |
+| --- | --- |
+| Фон, высота, padding, spacing, corner radius, position панели | применяется |
+| `top_margin` / `horizontal_margin` / `bar.hidden` | применяется |
+| Новые item-ы | добавляются как config-owned |
+| `kind`/`position`/`visible` существующего config-item | применяется |
+| Непустой статический `label`/`icon` | применяется, заменяет runtime-текст |
+| Стили и `[defaults]` | применяется; runtime `label`/`icon`/`background` сохраняются только если поле не задано в item-секции |
+| Item удалён из конфига | удаляется, если он config-owned |
+| Item, созданный через `item.add`/CLI | сохраняется как runtime-owned |
+| Новые плагины | запускаются |
+| Изменённые плагины | перезапускаются с новым spec |
+| Удалённые плагины | штатно останавливаются |
+| Плагины без изменений | продолжают работать |
+| Таймеры | пересоздаются из нового конфига |
+| `[system]` | монитор перезапускается только при изменении настроек |
+| Ошибка TOML/валидации | reload отклоняется, старая конфигурация остаётся активной |
 
 После правки конфига минимальный цикл:
 
 ```bash
 fluxbar config validate
-fluxbar trigger config_reload
+fluxbar config reload
 fluxbar status
 ```
 
@@ -1335,31 +1628,35 @@ printf '%s\n%s\n' \
 | Плагин запускается и сразу падает | stderr в логе, `fluxbar list --plugins`, `last_error` через RPC `plugin.list`; не пишет ли он отладку в stdout |
 | Item не обновляется | имя item-а совпадает, item существует, плагин подписан на событие, `tick_interval` задан |
 | Ответ плагина игнорируется | неверный `id`, неверная схема JSON, таймаут 10 с |
-| Конфиг не применяется | `config validate`; reload не всё применяет — см. раздел 9 |
-| Текст обрезается/наезжает | фиксированный `width`, меньше `font_size`, больше `padding`; ellipsis пока нет |
+| Конфиг не применяется | `fluxbar config validate`, затем `fluxbar config reload`; проверьте лог daemon |
+| Текст обрезается/наезжает | проверьте `width`/`max_width`, `padding` и `font_size`; длинный label обрезается с ellipsis |
 | Иконка — квадрат | в шрифте нет глифа; проверьте `icon_font` (Nerd Font) |
 | Медиа не появляется | `system.media = true`, разрешение Automation, запущен Music/Spotify |
 | Нет панели | `fluxbar status`; не `hidden` ли панель; `bar_show`; логи `-v` |
-| `top_margin` не работает | известное ограничение текущей версии |
 | Несколько daemon-ов конфликтуют | проверьте сокет и процессы; не запускайте второй start |
 
 ### 10.4. Известные ограничения текущей версии
 
 - Панель только macOS; core и headless-режим переносимы.
 - Нет абсолютного `x`, глобального z-index и меню-барных алиасов.
-- `top_margin` и `blur_radius` разбираются конфигом, но не применяются
-  нативной панелью; `display` (multi-monitor), `script` и `update_interval`
-  пока не реализованы полностью.
+- `display` (multi-monitor) не реализован.
+- `blur_radius` использует семантические материалы macOS, а не точный радиус.
+  На других платформах размытие не рисуется.
 - `brightness_change` не опрашивается.
 - `plugin`-тип mouse action и UDS/Wasm транспорты зарезервированы.
-- Progress-bar рисуется тонкой белой полосой внизу, может перекрывать
-  содержимое; цвет и высота не настраиваются.
-- `max_width` не делает ellipsis; длинный текст может обрезаться или выйти за
-  границы.
+- Progress-bar рисуется тонкой полосой внизу; цвет, трек, высота и позиция
+  (`bottom`/`top`/`background`) настраиваются, `top`/`bottom` резервируют
+  отдельную полосу и не перекрывают содержимое.
+- Фиксированный `width`/`max_width` может скрыть часть содержимого: label
+  обрезается с ellipsis, icon сжимается только после label.
 - Нет автоматического разрешения пересечений left/center/right; при
-  `full_width = false` панель прижата влево.
-- `config_reload` не является полным reconcile (см. раздел 9).
-- Плагины не создают item-ы; их нужно объявлять в конфиге или через CLI.
+  `full_width = false` ширина панели ограничена 1200 pt.
+- Скриптовые плагины требуют `/bin/sh`, `/bin/bash` или `lua` в `PATH`.
+- Плагин рабочих столов опрашивает yabai (нативные Spaces) или AeroSpace;
+  изменения подхватываются с задержкой до одного тика, для yabai нужен
+  scripting addition.
+- Совместимость со SketchyBar неполная: alias, bracket, popup, shadow и image
+  свойства принимаются, но не реализованы.
 - Wasm-песочницы нет: плагины выполняются с правами пользователя, устанавливайте
   только доверенный код.
 
@@ -1426,4 +1723,6 @@ fluxbar plugin remove <name>
 - [Rust-плагин hello](../examples/plugins/hello)
 - [Python-плагин hello-python](../examples/plugins/hello-python)
 - [Статус реализации](STATUS.md)
+- [Политика безопасности](../SECURITY.md)
+- [Правила участия](../CONTRIBUTING.md)
 - [Backlog](../TODO.md)

@@ -8,6 +8,8 @@
 mod app;
 #[cfg(target_os = "macos")]
 mod renderer;
+#[cfg(target_os = "macos")]
+mod text;
 
 #[cfg(target_os = "macos")]
 pub use app::{

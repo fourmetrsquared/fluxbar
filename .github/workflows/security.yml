@@ -1,0 +1,34 @@
+name: Security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Audit workspace lockfile
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cargo-audit for examples
+        run: cargo install cargo-audit --locked
+
+      - name: Audit example lockfiles
+        run: |
+          cargo audit --file examples/plugins/hello/Cargo.lock
+          cargo audit --file examples/plugins/workspaces/Cargo.lock

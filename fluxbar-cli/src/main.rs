@@ -10,6 +10,8 @@ mod daemon;
 mod default_config;
 mod handler;
 mod plugin_manager;
+mod scripts;
+mod sketchybar;
 
 /// Blazing fast. Secure. Absolutely customizable.
 #[derive(Debug, Parser)]
@@ -74,6 +76,12 @@ enum Command {
     },
     /// Show the socket path and configuration location.
     Paths,
+    /// SketchyBar-compatible command interface used by item scripts/plugins.
+    Sketchybar {
+        /// Arguments forwarded to the compatibility layer.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -109,6 +117,8 @@ enum ConfigCommand {
     },
     /// Validate the configuration.
     Validate,
+    /// Re-read and apply the configuration in the running daemon.
+    Reload,
     /// Print the effective configuration.
     Show,
 }
@@ -167,9 +177,10 @@ fn main() -> ExitCode {
         Command::List { plugins } => commands::list(&socket, plugins),
         Command::Trigger { name, payload } => commands::trigger(&socket, &name, &payload),
         Command::Status => commands::status(&socket),
-        Command::Config { command } => commands::config(config, command),
+        Command::Config { command } => commands::config(config, &socket, command),
         Command::Plugin { command } => commands::plugin(&socket, config, command),
         Command::Paths => commands::paths(config, &socket),
+        Command::Sketchybar { args } => sketchybar::run(&socket, &args),
     };
 
     match result {

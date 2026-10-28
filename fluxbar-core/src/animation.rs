@@ -135,6 +135,21 @@ pub fn ease(function: EasingFunction, t: f64) -> f64 {
                 (1.0 + ease_out_bounce(2.0 * t - 1.0)) / 2.0
             }
         }
+        EasingFunction::Spring => {
+            if t <= 0.0 {
+                0.0
+            } else if t >= 1.0 {
+                1.0
+            } else {
+                // Underdamped step response (damping ratio 0.62).
+                const ZETA: f64 = 0.62;
+                const OMEGA: f64 = 14.0;
+                let omega_d = OMEGA * (1.0 - ZETA * ZETA).sqrt();
+                let decay = (-ZETA * OMEGA * t).exp();
+                let phase = omega_d * t;
+                1.0 - decay * (phase.cos() + (ZETA * OMEGA / omega_d) * phase.sin())
+            }
+        }
     }
 }
 
@@ -244,6 +259,7 @@ mod tests {
             EasingFunction::EaseOutBack,
             EasingFunction::EaseInBounce,
             EasingFunction::EaseOutElastic,
+            EasingFunction::Spring,
         ] {
             assert!(
                 (ease(function, 0.0) - 0.0).abs() < 1e-9,
@@ -254,6 +270,14 @@ mod tests {
                 "{function:?} at 1"
             );
         }
+    }
+
+    #[test]
+    fn spring_overshoots_then_settles() {
+        assert!(ease(EasingFunction::Spring, 0.3) > 1.0);
+        assert!(ease(EasingFunction::Spring, 0.85) < 1.001);
+        assert_eq!(ease(EasingFunction::Spring, 0.0), 0.0);
+        assert_eq!(ease(EasingFunction::Spring, 1.0), 1.0);
     }
 
     #[test]

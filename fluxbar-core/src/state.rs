@@ -1,6 +1,6 @@
 //! Shared bar state.
 
-use crate::config::Config;
+use crate::config::{Config, ItemConfig};
 use crate::error::{FluxError, Result};
 use crate::event::{Event, EventBus};
 use crate::geometry::Position;
@@ -99,6 +99,124 @@ impl StateHandle {
         *self.config.write() = config;
     }
 
+    /// Apply a JSON merge patch to the bar configuration.
+    pub fn configure_bar(&self, patch: &serde_json::Value) -> Result<crate::config::BarConfig> {
+        let bar = {
+            let mut config = self.config.write();
+            let mut value = serde_json::to_value(&config.bar)?;
+            merge_json(&mut value, patch.clone());
+            let bar: crate::config::BarConfig = serde_json::from_value(value)
+                .map_err(|e| FluxError::invalid(format!("invalid bar configuration: {e}")))?;
+            if !(0.0..=1.0).contains(&bar.opacity) {
+                return Err(FluxError::invalid(
+                    "bar.opacity must be between 0.0 and 1.0",
+                ));
+            }
+            if bar.blur_radius < 0.0 {
+                return Err(FluxError::invalid("bar.blur_radius must be >= 0"));
+            }
+            config.bar = bar.clone();
+            bar
+        };
+        self.write().next_version();
+        Ok(bar)
+    }
+
+    /// Apply a JSON merge patch to the defaults for future items.
+    pub fn configure_defaults(&self, patch: &serde_json::Value) -> Result<ItemConfig> {
+        let defaults = {
+            let mut config = self.config.write();
+            let mut value = serde_json::to_value(&config.defaults)?;
+            merge_json(&mut value, patch.clone());
+            config.defaults = serde_json::from_value(value)
+                .map_err(|e| FluxError::invalid(format!("invalid defaults: {e}")))?;
+            config.defaults.clone()
+        };
+        Ok(defaults)
+    }
+
+    /// Apply a JSON merge patch to an item's static configuration together
+    /// with an optional runtime-state update.
+    pub fn configure_item(
+        &self,
+        name: &str,
+        patch: &serde_json::Value,
+        state_update: Option<ItemUpdate>,
+    ) -> Result<Item> {
+        let mut guard = self.write();
+        let item = guard
+            .items
+            .get_mut(name)
+            .ok_or_else(|| FluxError::ItemNotFound(name.to_string()))?;
+
+        if !patch.is_null() {
+            let mut value = serde_json::to_value(&item.config)?;
+            merge_json(&mut value, patch.clone());
+            let config: ItemConfig = serde_json::from_value(value)
+                .map_err(|e| FluxError::invalid(format!("invalid item configuration: {e}")))?;
+            crate::config::validate_item(name, &config)?;
+            item.kind = config.kind;
+            item.position = config.position;
+            item.config = config;
+        }
+        if let Some(update) = state_update {
+            item.apply_update(update);
+        }
+        let snapshot = item.clone();
+        guard.next_version();
+        drop(guard);
+        self.emit(Event::custom(
+            "item_configured",
+            serde_json::json!({"name": name}),
+        ));
+        Ok(snapshot)
+    }
+
+    /// Add or remove event subscriptions for an item.
+    pub fn subscribe_item(&self, name: &str, events: &[String], add: bool) -> Result<Item> {
+        let mut guard = self.write();
+        let item = guard
+            .items
+            .get_mut(name)
+            .ok_or_else(|| FluxError::ItemNotFound(name.to_string()))?;
+        if add {
+            for event in events {
+                if !item.config.subscribe.contains(event) {
+                    item.config.subscribe.push(event.clone());
+                }
+            }
+        } else {
+            item.config
+                .subscribe
+                .retain(|event| !events.contains(event));
+        }
+        let snapshot = item.clone();
+        guard.next_version();
+        Ok(snapshot)
+    }
+
+    /// Rename an item while preserving its runtime state and configuration.
+    pub fn rename_item(&self, old: &str, new: &str) -> Result<Item> {
+        validate_item_name(new)?;
+        let mut guard = self.write();
+        if guard.items.contains_key(new) {
+            return Err(FluxError::invalid(format!("item `{new}` already exists")));
+        }
+        let mut item = guard
+            .items
+            .remove(old)
+            .ok_or_else(|| FluxError::ItemNotFound(old.to_string()))?;
+        item.name = new.to_string();
+        guard.items.insert(new.to_string(), item.clone());
+        guard.next_version();
+        drop(guard);
+        self.emit(
+            Event::custom("item_renamed", serde_json::json!({"old": old, "new": new}))
+                .with_source("core"),
+        );
+        Ok(item)
+    }
+
     /// Emit an event.
     pub fn emit(&self, event: Event) -> usize {
         self.bus.emit(event)
@@ -119,7 +237,8 @@ impl StateHandle {
         let mut config = self.config.read().item(name);
         config.kind = kind;
         config.position = position;
-        let item = Item::new(name, config);
+        let mut item = Item::new(name, config);
+        item.origin = crate::item::ItemOrigin::Runtime;
         guard.items.insert(name.to_string(), item.clone());
         guard.next_version();
         drop(guard);
@@ -214,6 +333,24 @@ impl StateHandle {
     }
 }
 
+/// Recursively merge a JSON object into another (RFC 7396 style for objects).
+fn merge_json(base: &mut serde_json::Value, patch: serde_json::Value) {
+    match (base, patch) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(patch)) => {
+            for (key, value) in patch {
+                if value.is_null() {
+                    base.remove(&key);
+                } else if let Some(existing) = base.get_mut(&key) {
+                    merge_json(existing, value);
+                } else {
+                    base.insert(key, value);
+                }
+            }
+        }
+        (base, patch) => *base = patch,
+    }
+}
+
 /// Validate an item name.
 pub fn validate_item_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
@@ -262,6 +399,17 @@ mod tests {
 
         handle.remove_item("cpu").unwrap();
         assert!(handle.item("cpu").is_none());
+    }
+
+    #[test]
+    fn invalid_bar_patch_is_not_applied() {
+        let handle = handle();
+        assert!(
+            handle
+                .configure_bar(&serde_json::json!({"opacity": 1.5}))
+                .is_err()
+        );
+        assert_eq!(handle.config().bar.opacity, 1.0);
     }
 
     #[test]

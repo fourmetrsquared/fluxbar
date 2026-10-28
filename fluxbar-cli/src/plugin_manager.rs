@@ -17,16 +17,21 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use fluxbar_core::config::Config;
+use fluxbar_core::config::{Config, PluginRuntime};
 
 /// Manifest file name inside plugin repositories.
 pub const MANIFEST_FILE: &str = "fluxbar-plugin.toml";
 
 /// Metadata written next to a copied local plugin, pointing at its source.
 const LOCAL_INSTALL_METADATA: &str = ".fluxbar-install.toml";
+
+/// Manifests are small; cap them so a hostile repository cannot make the
+/// installer allocate an arbitrary amount of memory.
+const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
 
 /// Plugin manifest.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -41,6 +46,9 @@ pub struct PluginManifest {
     /// Entry point, relative to the plugin directory.
     #[serde(default)]
     pub entry: Option<String>,
+    /// Script runtime (`sh`, `bash`, `lua`) for event-driven plugins.
+    #[serde(default)]
+    pub runtime: Option<PluginRuntime>,
     /// Events the plugin subscribes to.
     #[serde(default)]
     pub subscribe: Vec<String>,
@@ -87,9 +95,26 @@ pub fn plugins_dir() -> Result<PathBuf> {
 
 /// Create the plugin source and registration directories under `config_dir`.
 pub fn ensure_layout(config_dir: &Path) -> Result<()> {
-    fs::create_dir_all(config_dir.join("plugins"))?;
-    fs::create_dir_all(config_dir.join("plugins.d"))?;
+    create_private_dir(config_dir)?;
+    create_private_dir(&config_dir.join("plugins"))?;
+    create_private_dir(&config_dir.join("plugins.d"))?;
     Ok(())
+}
+
+fn create_private_dir(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700);
+        builder.create(path)?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(path)?;
+        Ok(())
+    }
 }
 
 fn config_dir() -> Result<PathBuf> {
@@ -114,7 +139,7 @@ pub fn parse_source(source: &str) -> Result<(Option<String>, String)> {
         let name = rest.rsplit('/').next().unwrap_or(rest);
         return Ok((
             Some(format!("https://github.com/{rest}.git")),
-            sanitize_name(name),
+            validated_name(name)?,
         ));
     }
 
@@ -128,7 +153,7 @@ pub fn parse_source(source: &str) -> Result<(Option<String>, String)> {
             .next()
             .unwrap_or("plugin")
             .trim_end_matches(".git");
-        return Ok((Some(trimmed.to_string()), sanitize_name(name)));
+        return Ok((Some(trimmed.to_string()), validated_name(name)?));
     }
 
     // Local path.
@@ -136,11 +161,16 @@ pub fn parse_source(source: &str) -> Result<(Option<String>, String)> {
     if !path.exists() {
         bail!("`{source}` is neither a git URL nor an existing path");
     }
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "plugin".into());
-    Ok((None, sanitize_name(&name)))
+    let name = if path.is_file() {
+        path.file_stem()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "plugin".into())
+    } else {
+        path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "plugin".into())
+    };
+    Ok((None, validated_name(&name)?))
 }
 
 fn sanitize_name(name: &str) -> String {
@@ -157,6 +187,52 @@ fn sanitize_name(name: &str) -> String {
     cleaned.trim_matches('-').to_lowercase()
 }
 
+/// Validate a plugin name before it is used as a path component.
+///
+/// Empty names are dangerous: joining them with `plugins` yields the plugins
+/// root itself, and removing such a plugin would recursively delete every
+/// installed plugin. Keep the accepted alphabet aligned with
+/// [`sanitize_name`].
+fn validated_name(name: &str) -> Result<String> {
+    if name.contains('/') || name.contains('\\') {
+        bail!("plugin name must not contain path separators");
+    }
+    let name = sanitize_name(name);
+    if name.is_empty() {
+        bail!("plugin name must contain at least one ASCII letter or digit");
+    }
+    Ok(name)
+}
+
+fn manifest_name(manifest: &PluginManifest, fallback: &str) -> Result<String> {
+    manifest
+        .name
+        .as_deref()
+        .map(validated_name)
+        .unwrap_or_else(|| validated_name(fallback))
+}
+
+/// Validate an entry path from a manifest. Entry points must stay inside the
+/// plugin directory even when the repository or local source is untrusted.
+fn validated_entry_path(entry: &str) -> Result<PathBuf> {
+    let entry = entry.trim();
+    if entry.is_empty() {
+        bail!("plugin entry must not be empty");
+    }
+    let path = Path::new(entry);
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        bail!("plugin entry `{entry}` must be relative to the plugin directory");
+    }
+    Ok(path.to_path_buf())
+}
+
 /// Install a plugin from git or a local directory.
 ///
 /// Git plugins are cloned into the configuration directory. Local plugins are
@@ -171,7 +247,8 @@ fn install_at(options: InstallOptions, config_dir: &Path) -> Result<InstalledPlu
     let name = options
         .name
         .as_deref()
-        .map(sanitize_name)
+        .map(validated_name)
+        .transpose()?
         .unwrap_or(suggested);
 
     ensure_layout(config_dir)?;
@@ -200,7 +277,7 @@ fn install_at(options: InstallOptions, config_dir: &Path) -> Result<InstalledPlu
         )?;
 
         let manifest = read_manifest(&destination)?;
-        let plugin_name = manifest.name.clone().unwrap_or_else(|| name.clone());
+        let plugin_name = manifest_name(&manifest, &name)?;
         if options.build {
             build_plugin(&destination, &manifest)?;
         }
@@ -219,15 +296,18 @@ fn install_at(options: InstallOptions, config_dir: &Path) -> Result<InstalledPlu
     let source = source
         .canonicalize()
         .with_context(|| format!("cannot resolve {}", source.display()))?;
+    if source.is_file() {
+        return install_script_file(options, config_dir, &source, &name);
+    }
     if !source.is_dir() {
         bail!(
-            "local plugin source must be a directory: {}",
+            "local plugin source must be a directory or script: {}",
             source.display()
         );
     }
 
     let manifest = read_manifest(&source)?;
-    let plugin_name = manifest.name.clone().unwrap_or_else(|| name.clone());
+    let plugin_name = manifest_name(&manifest, &name)?;
 
     if options.build {
         build_plugin(&source, &manifest)?;
@@ -273,6 +353,77 @@ fn install_at(options: InstallOptions, config_dir: &Path) -> Result<InstalledPlu
 
     Ok(InstalledPlugin {
         name: plugin_name,
+        config_path,
+        location: destination,
+        command: Some(entry.display()),
+    })
+}
+
+fn install_script_file(
+    options: InstallOptions,
+    config_dir: &Path,
+    source: &Path,
+    name: &str,
+) -> Result<InstalledPlugin> {
+    let runtime = PluginRuntime::from_entry(&source.to_string_lossy());
+    if !runtime.is_script() {
+        bail!(
+            "single-file plugins must be .lua, .sh or .bash scripts: {}",
+            source.display()
+        );
+    }
+
+    let file_name = source
+        .file_name()
+        .context("plugin script has no file name")?;
+    let manifest = PluginManifest {
+        name: Some(name.to_string()),
+        entry: Some(file_name.to_string_lossy().to_string()),
+        runtime: Some(runtime),
+        subscribe: vec!["*".into()],
+        ..PluginManifest::default()
+    };
+
+    if options.link {
+        let entry = ResolvedEntry {
+            program: match runtime {
+                PluginRuntime::Lua => "lua".into(),
+                PluginRuntime::Bash => "/bin/bash".into(),
+                PluginRuntime::Sh | PluginRuntime::JsonRpc => "/bin/sh".into(),
+            },
+            args: vec![source.to_string_lossy().to_string()],
+        };
+        let config_path = write_registration(config_dir, name, &entry, &manifest)?;
+        return Ok(InstalledPlugin {
+            name: name.to_string(),
+            config_path,
+            location: source.parent().unwrap_or(source).to_path_buf(),
+            command: Some(entry.display()),
+        });
+    }
+
+    let destination = config_dir.join("plugins").join(name);
+    if destination.exists() {
+        bail!(
+            "plugin directory {} already exists; use `fluxbar plugin update {name}`",
+            destination.display()
+        );
+    }
+    fs::create_dir_all(&destination)?;
+    let destination_file = destination.join(file_name);
+    fs::copy(source, &destination_file).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            source.display(),
+            destination_file.display()
+        )
+    })?;
+    write_local_metadata(&destination, source)?;
+    let entry = resolve_entry(&destination, &manifest)?;
+    let config_path = write_registration(config_dir, name, &entry, &manifest)?;
+
+    Ok(InstalledPlugin {
+        name: name.to_string(),
         config_path,
         location: destination,
         command: Some(entry.display()),
@@ -336,21 +487,17 @@ fn copy_entry_artifact(source: &Path, destination: &Path, manifest: &PluginManif
         return Ok(());
     };
 
-    for interpreter in ["node ", "python3 ", "python "] {
+    for interpreter in [
+        "node ", "python3 ", "python ", "lua ", "luajit ", "sh ", "bash ",
+    ] {
         if let Some(script) = entry.strip_prefix(interpreter) {
-            if Path::new(script.trim()).is_absolute() {
-                bail!("plugin entry `{entry}` points outside the plugin directory; use --link");
-            }
+            validated_entry_path(script)?;
             return Ok(());
         }
     }
 
-    let entry_path = Path::new(entry);
-    if entry_path.is_absolute() {
-        bail!("plugin entry `{entry}` is absolute; use --link to register it in place");
-    }
-
-    let from = source.join(entry_path);
+    let entry_path = validated_entry_path(entry)?;
+    let from = source.join(&entry_path);
     if !from.exists() {
         bail!("entry point {} does not exist after build", from.display());
     }
@@ -442,8 +589,7 @@ fn read_local_metadata(destination: &Path) -> Result<Option<LocalInstall>> {
     if !path.exists() {
         return Ok(None);
     }
-    let contents =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let contents = read_text_limited(&path, MAX_MANIFEST_BYTES)?;
     let metadata =
         toml::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))?;
     Ok(Some(metadata))
@@ -454,16 +600,54 @@ fn read_manifest(directory: &Path) -> Result<PluginManifest> {
     if !path.exists() {
         return infer_manifest(directory);
     }
-    let contents = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let contents = read_text_limited(&path, MAX_MANIFEST_BYTES)?;
     let manifest: PluginManifest =
         toml::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))?;
     Ok(manifest)
 }
 
+fn read_text_limited(path: &Path, limit: u64) -> Result<String> {
+    let file =
+        fs::File::open(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let mut contents = String::new();
+    file.take(limit + 1)
+        .read_to_string(&mut contents)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    if contents.len() as u64 > limit {
+        bail!("{} is too large (limit {limit} bytes)", path.display());
+    }
+    Ok(contents)
+}
+
+fn write_text_private(path: &Path, contents: &str) -> Result<()> {
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() {
+            fs::remove_file(path)?;
+        }
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    file.write_all(contents.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 fn infer_manifest(directory: &Path) -> Result<PluginManifest> {
     if directory.join("Cargo.toml").exists() {
-        let contents = std::fs::read_to_string(directory.join("Cargo.toml"))?;
+        let contents = read_text_limited(&directory.join("Cargo.toml"), MAX_MANIFEST_BYTES)?;
         let value: toml::Value = toml::from_str(&contents)?;
         let package = value
             .get("package")
@@ -475,6 +659,7 @@ fn infer_manifest(directory: &Path) -> Result<PluginManifest> {
             name: Some(package.clone()),
             build: Some("cargo build --release".into()),
             entry: Some(format!("target/release/{package}")),
+            runtime: None,
             subscribe: vec!["*".into()],
             tick_interval: None,
             description: None,
@@ -486,6 +671,7 @@ fn infer_manifest(directory: &Path) -> Result<PluginManifest> {
             name: None,
             build: Some("npm install".into()),
             entry: Some("index.js".into()),
+            runtime: None,
             subscribe: vec!["*".into()],
             tick_interval: None,
             description: None,
@@ -497,14 +683,36 @@ fn infer_manifest(directory: &Path) -> Result<PluginManifest> {
             name: None,
             build: None,
             entry: Some("main.py".into()),
+            runtime: None,
             subscribe: vec!["*".into()],
             tick_interval: None,
             description: None,
         });
     }
 
+    for (file, runtime) in [
+        ("plugin.lua", PluginRuntime::Lua),
+        ("main.lua", PluginRuntime::Lua),
+        ("plugin.bash", PluginRuntime::Bash),
+        ("main.bash", PluginRuntime::Bash),
+        ("plugin.sh", PluginRuntime::Sh),
+        ("main.sh", PluginRuntime::Sh),
+    ] {
+        if directory.join(file).exists() {
+            return Ok(PluginManifest {
+                name: None,
+                build: None,
+                entry: Some(file.into()),
+                runtime: Some(runtime),
+                subscribe: vec!["*".into()],
+                tick_interval: None,
+                description: None,
+            });
+        }
+    }
+
     bail!(
-        "{} has no {MANIFEST_FILE} and no recognisable project layout",
+        "{} has no {MANIFEST_FILE} and no recognisable project layout (expected Cargo.toml, package.json, main.py, plugin.lua or plugin.sh)",
         directory.display()
     )
 }
@@ -532,18 +740,26 @@ fn resolve_entry(directory: &Path, manifest: &PluginManifest) -> Result<Resolved
 
     // A manifest may already contain a command line such as
     // `python3 plugin.py`; split off the interpreter.
-    for interpreter in ["node ", "python3 ", "python "] {
+    for (interpreter, program) in [
+        ("node ", "node"),
+        ("python3 ", "python3"),
+        ("python ", "python3"),
+        ("lua ", "lua"),
+        ("luajit ", "lua"),
+        ("sh ", "/bin/sh"),
+        ("bash ", "/bin/bash"),
+    ] {
         if let Some(rest) = entry.strip_prefix(interpreter) {
-            let program = interpreter.trim().to_string();
-            let script = directory.join(rest.trim());
+            let script = directory.join(validated_entry_path(rest)?);
             return Ok(ResolvedEntry {
-                program,
+                program: program.to_string(),
                 args: vec![script.to_string_lossy().to_string()],
             });
         }
     }
 
-    let path = directory.join(entry);
+    let relative = validated_entry_path(entry)?;
+    let path = directory.join(relative);
     let path = path.to_string_lossy().to_string();
 
     let resolved = if entry.ends_with(".js") {
@@ -554,6 +770,21 @@ fn resolve_entry(directory: &Path, manifest: &PluginManifest) -> Result<Resolved
     } else if entry.ends_with(".py") {
         ResolvedEntry {
             program: "python3".into(),
+            args: vec![path],
+        }
+    } else if entry.ends_with(".lua") {
+        ResolvedEntry {
+            program: "lua".into(),
+            args: vec![path],
+        }
+    } else if entry.ends_with(".bash") {
+        ResolvedEntry {
+            program: "/bin/bash".into(),
+            args: vec![path],
+        }
+    } else if entry.ends_with(".sh") {
+        ResolvedEntry {
+            program: "/bin/sh".into(),
             args: vec![path],
         }
     } else {
@@ -585,6 +816,7 @@ fn write_registration(
     entry: &ResolvedEntry,
     manifest: &PluginManifest,
 ) -> Result<PathBuf> {
+    let name = validated_name(name)?;
     let dir = config_dir.join("plugins.d");
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{name}.toml"));
@@ -600,19 +832,38 @@ fn write_registration(
         command: &'a str,
         #[serde(skip_serializing_if = "slice_is_empty")]
         args: &'a [String],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        runtime: Option<&'a str>,
         subscribe: &'a [String],
         #[serde(skip_serializing_if = "Option::is_none")]
         tick_interval: Option<u64>,
         auto_restart: bool,
     }
 
+    let runtime = manifest.runtime.or_else(|| {
+        let candidate = entry
+            .args
+            .iter()
+            .find(|arg| {
+                std::path::Path::new(arg)
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| matches!(extension, "lua" | "sh" | "bash"))
+            })
+            .cloned()
+            .unwrap_or_else(|| entry.program.clone());
+        Some(PluginRuntime::from_entry(&candidate))
+    });
+    let runtime = runtime.filter(|runtime| runtime.is_script());
+
     let mut plugins = std::collections::BTreeMap::new();
     plugins.insert(
-        name,
+        name.as_str(),
         PluginEntry {
             plugin_type: "external",
             command: &entry.program,
             args: &entry.args,
+            runtime: runtime.map(PluginRuntime::as_str),
             subscribe: &manifest.subscribe,
             tick_interval: manifest.tick_interval,
             auto_restart: true,
@@ -620,7 +871,7 @@ fn write_registration(
     );
     let root = Root { plugins };
     let contents = toml::to_string_pretty(&root)?;
-    std::fs::write(&path, contents)?;
+    write_text_private(&path, &contents)?;
     Ok(path)
 }
 
@@ -633,7 +884,7 @@ pub fn remove(name: &str) -> Result<()> {
 }
 
 fn remove_at(name: &str, config_dir: &Path) -> Result<()> {
-    let name = sanitize_name(name);
+    let name = validated_name(name)?;
     let config_path = config_dir.join("plugins.d").join(format!("{name}.toml"));
     if !config_path.exists() {
         bail!("plugin `{name}` is not registered");
@@ -653,7 +904,7 @@ pub fn update(name: &str) -> Result<()> {
 }
 
 fn update_at(name: &str, config_dir: &Path) -> Result<()> {
-    let name = sanitize_name(name);
+    let name = validated_name(name)?;
     let config_path = config_dir.join("plugins.d").join(format!("{name}.toml"));
     if !config_path.exists() {
         bail!("plugin `{name}` is not registered");
@@ -667,6 +918,32 @@ fn update_at(name: &str, config_dir: &Path) -> Result<()> {
     };
     if !source.exists() {
         bail!("plugin source {} no longer exists", source.display());
+    }
+
+    if source.is_file() {
+        if copied.is_none() {
+            bail!("linked script plugins are updated in place");
+        }
+        let runtime = PluginRuntime::from_entry(&source.to_string_lossy());
+        if !runtime.is_script() {
+            bail!("unsupported single-file plugin {}", source.display());
+        }
+        let file_name = source
+            .file_name()
+            .context("plugin script has no file name")?;
+        fs::create_dir_all(&destination)?;
+        fs::copy(&source, destination.join(file_name))?;
+        write_local_metadata(&destination, &source)?;
+        let manifest = PluginManifest {
+            name: Some(name.clone()),
+            entry: Some(file_name.to_string_lossy().to_string()),
+            runtime: Some(runtime),
+            subscribe: vec!["*".into()],
+            ..PluginManifest::default()
+        };
+        let entry = resolve_entry(&destination, &manifest)?;
+        write_registration(config_dir, &name, &entry, &manifest)?;
+        return Ok(());
     }
 
     if source.join(".git").exists() {
@@ -692,7 +969,7 @@ fn update_at(name: &str, config_dir: &Path) -> Result<()> {
         )?;
     }
 
-    let plugin_name = manifest.name.clone().unwrap_or_else(|| name.clone());
+    let plugin_name = manifest_name(&manifest, &name)?;
     let mut entry = resolve_entry(&source, &manifest)?;
 
     if copied.is_some() {
@@ -828,6 +1105,84 @@ subscribe = ["*"]
     }
 
     #[test]
+    fn rejects_empty_and_escaping_names() {
+        assert!(validated_name("!!!").is_err());
+        assert!(validated_name("../../etc/passwd").is_err());
+        assert_eq!(validated_name("My Plugin!").unwrap(), "my-plugin");
+    }
+
+    #[test]
+    fn rejects_escaping_entry_paths() {
+        assert!(validated_entry_path("../outside").is_err());
+        assert!(validated_entry_path("/usr/bin/true").is_err());
+        assert!(validated_entry_path("target/release/plugin").is_ok());
+        assert!(validated_entry_path("./plugin.py").is_ok());
+    }
+
+    #[test]
+    fn rejects_manifest_registration_traversal() {
+        let manifest = PluginManifest {
+            name: Some("../../escaped".into()),
+            ..PluginManifest::default()
+        };
+        assert!(manifest_name(&manifest, "fallback").is_err());
+
+        let config = TempDir::new().unwrap();
+        let entry = ResolvedEntry {
+            program: "/usr/bin/demo".into(),
+            args: Vec::new(),
+        };
+        assert!(
+            write_registration(
+                config.path(),
+                "../../escaped",
+                &entry,
+                &PluginManifest::default()
+            )
+            .is_err()
+        );
+        assert!(
+            !config
+                .path()
+                .parent()
+                .unwrap()
+                .join("escaped.toml")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn rejects_manifest_entry_traversal_during_install() {
+        let config = TempDir::new().unwrap();
+        let source_root = TempDir::new().unwrap();
+        let source = write_python_plugin(source_root.path());
+        fs::write(
+            source.join(MANIFEST_FILE),
+            r#"
+name = "demo"
+entry = "../escaped.py"
+"#,
+        )
+        .unwrap();
+
+        let error = install_at(copy_options(&source), config.path()).unwrap_err();
+        assert!(error.to_string().contains("must be relative"));
+        assert!(!config.path().join("plugins/demo").exists());
+    }
+
+    #[test]
+    fn rejects_oversized_manifest() {
+        let root = TempDir::new().unwrap();
+        fs::write(
+            root.path().join(MANIFEST_FILE),
+            "x".repeat(MAX_MANIFEST_BYTES as usize + 1),
+        )
+        .unwrap();
+        let error = read_manifest(root.path()).unwrap_err();
+        assert!(error.to_string().contains("too large"));
+    }
+
+    #[test]
     fn local_plugin_is_copied_into_config_dir() {
         let config = TempDir::new().unwrap();
         let source_root = TempDir::new().unwrap();
@@ -892,6 +1247,32 @@ subscribe = ["*"]
     }
 
     #[test]
+    fn installs_single_script_file() {
+        let config = TempDir::new().unwrap();
+        let source_root = TempDir::new().unwrap();
+        let source = source_root.path().join("tick.sh");
+        fs::write(&source, "#!/bin/sh\nprintf '{}\\n'\n").unwrap();
+
+        let installed = install_at(
+            InstallOptions {
+                source: source.display().to_string(),
+                name: None,
+                build: false,
+                link: false,
+            },
+            config.path(),
+        )
+        .unwrap();
+
+        assert_eq!(installed.name, "tick");
+        assert!(config.path().join("plugins/tick/tick.sh").exists());
+        let registration = fs::read_to_string(installed.config_path).unwrap();
+        assert!(registration.contains("command = \"/bin/sh\""));
+        assert!(registration.contains("runtime = \"sh\""));
+        assert!(registration.contains("plugins/tick/tick.sh"));
+    }
+
+    #[test]
     fn link_is_rejected_for_git_sources() {
         let config = TempDir::new().unwrap();
         let options = InstallOptions {
@@ -910,6 +1291,7 @@ subscribe = ["*"]
         let manifest = PluginManifest {
             subscribe: vec!["tick".into()],
             tick_interval: Some(1),
+            runtime: Some(PluginRuntime::Sh),
             ..PluginManifest::default()
         };
         let entry = ResolvedEntry {

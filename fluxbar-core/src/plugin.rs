@@ -5,10 +5,15 @@
 //! once, forwards matching events, applies returned updates, and restarts
 //! crashed plugins with exponential backoff.
 
-use crate::config::{PluginConfig, PluginType};
+use crate::config::{PluginConfig, PluginRuntime, PluginType};
 use crate::error::{FluxError, Result};
 use crate::event::{Event, EventKind};
-use crate::ipc::{JSONRPC_VERSION, RequestId, RpcRequest, RpcResponse};
+use crate::ipc::{
+    JSONRPC_VERSION, MAX_MESSAGE_BYTES, RequestId, RpcRequest, RpcResponse, read_line_limited,
+};
+use crate::script::{
+    ScriptCommand, ScriptContext, ScriptInvocation, run_script, sketchybar_sender,
+};
 use crate::state::StateHandle;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -17,13 +22,18 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 
+/// Stable run time after which the consecutive-crash counter is reset.
+const STABLE_RUN: Duration = Duration::from_secs(60);
+/// Maximum time to wait for a plugin to acknowledge shutdown.
+const PLUGIN_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Runtime description of a plugin.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginSpec {
     pub name: String,
     pub config: PluginConfig,
@@ -39,13 +49,55 @@ impl PluginSpec {
 
     /// Events this plugin cares about.
     pub fn subscribes_to(&self, event: &Event) -> bool {
-        if self.config.subscribe.is_empty() {
-            return false;
+        crate::script::subscription_matches(&self.config.subscribe, event.name())
+    }
+
+    /// Effective runtime, including extension-based inference.
+    pub fn runtime(&self) -> PluginRuntime {
+        self.config.effective_runtime()
+    }
+
+    /// Resolve the script file invoked by a script runtime.
+    pub fn script_command(&self) -> Result<ScriptCommand> {
+        let runtime = self.runtime();
+        if !runtime.is_script() {
+            return Err(FluxError::Plugin(format!(
+                "plugin `{}` is not a script plugin",
+                self.name
+            )));
         }
-        self.config
-            .subscribe
-            .iter()
-            .any(|pattern| pattern == "*" || pattern == event.name())
+
+        let command_path = self.config.command.as_deref().map(std::path::Path::new);
+        let command_name = command_path
+            .and_then(std::path::Path::file_name)
+            .and_then(|name| name.to_str());
+        let interpreter = matches!(command_name, Some("lua" | "luajit" | "sh" | "bash"));
+
+        let mut args = self.config.args.clone();
+        let path = if interpreter {
+            let index = args
+                .iter()
+                .position(|arg| !arg.starts_with('-'))
+                .ok_or_else(|| {
+                    FluxError::Plugin(format!(
+                        "script plugin `{}` has no script argument",
+                        self.name
+                    ))
+                })?;
+            let path = args.remove(index);
+            std::path::PathBuf::from(path)
+        } else if let Some(path) = &self.config.path {
+            path.clone()
+        } else if let Some(command) = &self.config.command {
+            std::path::PathBuf::from(command)
+        } else {
+            return Err(FluxError::Plugin(format!(
+                "script plugin `{}` has no command or path",
+                self.name
+            )));
+        };
+
+        Ok(ScriptCommand::File { path, args })
     }
 }
 
@@ -94,7 +146,7 @@ impl std::fmt::Debug for PluginProcess {
 
 impl PluginProcess {
     /// Spawn the plugin executable described by `spec`.
-    pub async fn spawn(spec: &PluginSpec) -> Result<Self> {
+    pub async fn spawn(spec: &PluginSpec, context: &ScriptContext) -> Result<Self> {
         let config = &spec.config;
         let command = config
             .command
@@ -107,6 +159,9 @@ impl PluginProcess {
             })
             .ok_or_else(|| FluxError::Plugin(format!("plugin `{}` has no command", spec.name)))?;
 
+        let command = crate::script::expand_home(std::path::Path::new(&command))
+            .to_string_lossy()
+            .to_string();
         let mut cmd = Command::new(&command);
         cmd.args(&config.args)
             .stdin(Stdio::piped())
@@ -115,8 +170,9 @@ impl PluginProcess {
             .kill_on_drop(true);
 
         if let Some(dir) = &config.working_dir {
-            cmd.current_dir(dir);
+            cmd.current_dir(crate::script::expand_home(dir));
         }
+        cmd.envs(crate::script::ambient_environment(context));
         if !config.env.is_empty() {
             cmd.envs(config.env.clone());
         }
@@ -140,8 +196,8 @@ impl PluginProcess {
         if let Some(stderr) = child.stderr.take() {
             let name = spec.name.clone();
             tokio::spawn(async move {
-                let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
+                let mut stderr = BufReader::new(stderr);
+                while let Ok(Some(line)) = read_line_limited(&mut stderr, MAX_MESSAGE_BYTES).await {
                     warn!(plugin = %name, "{line}");
                 }
             });
@@ -184,20 +240,22 @@ impl PluginProcess {
 
         let mut encoded = serde_json::to_vec(&request)?;
         encoded.push(b'\n');
-        self.stdin.write_all(&encoded).await?;
-        self.stdin.flush().await?;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            self.stdin.write_all(&encoded).await?;
+            self.stdin.flush().await
+        })
+        .await
+        .map_err(|_| FluxError::Plugin(format!("plugin `{}` stopped reading", self.name)))??;
 
-        let mut line = String::new();
-        let read = tokio::time::timeout(Duration::from_secs(10), self.stdout.read_line(&mut line))
-            .await
-            .map_err(|_| FluxError::Plugin(format!("plugin `{}` timed out", self.name)))??;
+        let line = tokio::time::timeout(
+            Duration::from_secs(10),
+            read_line_limited(&mut self.stdout, MAX_MESSAGE_BYTES),
+        )
+        .await
+        .map_err(|_| FluxError::Plugin(format!("plugin `{}` timed out", self.name)))??;
 
-        if read == 0 {
-            return Err(FluxError::Plugin(format!(
-                "plugin `{}` closed stdout",
-                self.name
-            )));
-        }
+        let line =
+            line.ok_or_else(|| FluxError::Plugin(format!("plugin `{}` closed stdout", self.name)))?;
 
         let response: RpcResponse = serde_json::from_str(line.trim()).map_err(|e| {
             FluxError::Plugin(format!("plugin `{}` sent invalid JSON: {e}", self.name))
@@ -235,8 +293,11 @@ impl PluginProcess {
         };
         if let Ok(mut encoded) = serde_json::to_vec(&request) {
             encoded.push(b'\n');
-            let _ = self.stdin.write_all(&encoded).await;
-            let _ = self.stdin.flush().await;
+            let _ = tokio::time::timeout(Duration::from_secs(2), async {
+                let _ = self.stdin.write_all(&encoded).await;
+                let _ = self.stdin.flush().await;
+            })
+            .await;
         }
         let _ = tokio::time::timeout(Duration::from_secs(2), self.child.wait()).await;
         let _ = self.child.kill().await;
@@ -250,6 +311,17 @@ impl PluginProcess {
     }
 }
 
+/// Explicit lifecycle state exposed by `plugin.list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginPhase {
+    Starting,
+    Running,
+    Backoff,
+    Stopped,
+    Failed,
+}
+
 /// Handle for one managed plugin.
 pub struct ManagedPlugin {
     pub spec: PluginSpec,
@@ -257,21 +329,46 @@ pub struct ManagedPlugin {
     pub restarts: Arc<std::sync::atomic::AtomicU32>,
     pub pid: Arc<parking_lot::Mutex<Option<u32>>>,
     pub last_error: Arc<parking_lot::Mutex<Option<String>>>,
+    phase: Arc<parking_lot::Mutex<PluginPhase>>,
+    direct_tx: mpsc::UnboundedSender<Event>,
+    stop_tx: watch::Sender<bool>,
     task: tokio::task::JoinHandle<()>,
+}
+
+#[derive(Clone)]
+struct PluginLifecycle {
+    running: Arc<AtomicBool>,
+    restarts: Arc<std::sync::atomic::AtomicU32>,
+    pid: Arc<parking_lot::Mutex<Option<u32>>>,
+    last_error: Arc<parking_lot::Mutex<Option<String>>>,
+    phase: Arc<parking_lot::Mutex<PluginPhase>>,
+}
+
+impl Default for PluginLifecycle {
+    fn default() -> Self {
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            restarts: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            pid: Arc::new(parking_lot::Mutex::new(None)),
+            last_error: Arc::new(parking_lot::Mutex::new(None)),
+            phase: Arc::new(parking_lot::Mutex::new(PluginPhase::Starting)),
+        }
+    }
 }
 
 impl std::fmt::Debug for ManagedPlugin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ManagedPlugin")
             .field("spec", &self.spec)
-            .field("running", &self.state.load(Ordering::Relaxed))
+            .field("running", &self.is_running())
+            .field("phase", &self.phase())
             .finish()
     }
 }
 
 impl ManagedPlugin {
     pub fn is_running(&self) -> bool {
-        self.state.load(Ordering::Relaxed)
+        self.state.load(Ordering::Relaxed) && *self.phase.lock() == PluginPhase::Running
     }
 
     pub fn restart_count(&self) -> u32 {
@@ -282,9 +379,27 @@ impl ManagedPlugin {
         self.last_error.lock().clone()
     }
 
-    pub fn stop(&self) {
-        self.task.abort();
+    pub fn phase(&self) -> PluginPhase {
+        *self.phase.lock()
+    }
+
+    /// Ask the task to shut down. The task sends a JSON-RPC `shutdown` request
+    /// and waits for the child process before exiting.
+    fn request_stop(&self) {
+        let _ = self.stop_tx.send(true);
         self.state.store(false, Ordering::Relaxed);
+        *self.phase.lock() = PluginPhase::Stopped;
+    }
+
+    async fn shutdown(mut self) {
+        self.request_stop();
+        if tokio::time::timeout(PLUGIN_SHUTDOWN_TIMEOUT, &mut self.task)
+            .await
+            .is_err()
+        {
+            warn!(plugin = %self.spec.name, "plugin shutdown timed out; aborting");
+            self.task.abort();
+        }
     }
 }
 
@@ -292,8 +407,7 @@ impl ManagedPlugin {
 pub struct PluginHost {
     state: StateHandle,
     plugins: parking_lot::Mutex<BTreeMap<String, ManagedPlugin>>,
-    shutdown_tx: watch::Sender<bool>,
-    shutdown_rx: watch::Receiver<bool>,
+    script_context: parking_lot::RwLock<ScriptContext>,
 }
 
 impl std::fmt::Debug for PluginHost {
@@ -306,13 +420,16 @@ impl std::fmt::Debug for PluginHost {
 
 impl PluginHost {
     pub fn new(state: StateHandle) -> Self {
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
         Self {
             state,
             plugins: parking_lot::Mutex::new(BTreeMap::new()),
-            shutdown_tx,
-            shutdown_rx,
+            script_context: parking_lot::RwLock::new(ScriptContext::default()),
         }
+    }
+
+    /// Configure paths and shims exposed to script plugins.
+    pub fn set_script_context(&self, context: ScriptContext) {
+        *self.script_context.write() = context;
     }
 
     /// Start every plugin from the configuration.
@@ -331,58 +448,107 @@ impl PluginHost {
         }
     }
 
+    /// Reconcile running plugins with a new configuration.
+    ///
+    /// Removed plugins are stopped, changed specs are restarted, and new
+    /// specs are started. Plugins whose spec is unchanged keep their process.
+    /// Returns `(started, stopped)` counts for diagnostics.
+    pub fn reconcile(&self, specs: BTreeMap<String, PluginSpec>) -> (usize, usize) {
+        let mut stopped = 0;
+        {
+            let mut plugins = self.plugins.lock();
+            let names: Vec<String> = plugins.keys().cloned().collect();
+            for name in names {
+                let should_stop = match (plugins.get(&name), specs.get(&name)) {
+                    (Some(plugin), Some(spec)) => plugin.spec != *spec,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                if should_stop {
+                    if let Some(plugin) = plugins.remove(&name) {
+                        plugin.request_stop();
+                        stopped += 1;
+                    }
+                }
+            }
+        }
+
+        let mut started = 0;
+        for (name, spec) in specs {
+            let missing = !self.plugins.lock().contains_key(&name);
+            if missing {
+                self.start(spec);
+                started += 1;
+            }
+        }
+        (started, stopped)
+    }
+
     /// Start a single plugin.
     pub fn start(&self, spec: PluginSpec) {
         let name = spec.name.clone();
-        if self.plugins.lock().contains_key(&name) {
+        let mut plugins = self.plugins.lock();
+        if plugins.contains_key(&name) {
             warn!(plugin = %name, "plugin already running");
             return;
         }
 
         let state = self.state.clone();
-        let running = Arc::new(AtomicBool::new(true));
-        let running_task = running.clone();
-        let restarts = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let restarts_task = restarts.clone();
-        let pid = Arc::new(parking_lot::Mutex::new(None));
-        let pid_task = pid.clone();
-        let last_error = Arc::new(parking_lot::Mutex::new(None));
-        let last_error_task = last_error.clone();
-        let mut shutdown_rx = self.shutdown_rx.clone();
+        let lifecycle = PluginLifecycle::default();
+        let lifecycle_task = lifecycle.clone();
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel();
+        let (stop_tx, mut stop_rx) = watch::channel(false);
         let spec_task = spec.clone();
+        let script_context = self.script_context.read().clone();
 
-        let task = tokio::spawn(async move {
-            run_plugin(
-                spec_task,
-                state,
-                running_task,
-                restarts_task,
-                pid_task,
-                last_error_task,
-                &mut shutdown_rx,
-            )
-            .await;
-        });
+        let task = if spec.runtime().is_script() {
+            tokio::spawn(async move {
+                run_script_plugin(
+                    spec_task,
+                    state,
+                    script_context,
+                    lifecycle_task,
+                    &mut stop_rx,
+                    &mut direct_rx,
+                )
+                .await;
+            })
+        } else {
+            tokio::spawn(async move {
+                run_plugin(
+                    spec_task,
+                    state,
+                    script_context,
+                    lifecycle_task,
+                    &mut stop_rx,
+                    &mut direct_rx,
+                )
+                .await;
+            })
+        };
 
-        self.plugins.lock().insert(
+        plugins.insert(
             name,
             ManagedPlugin {
                 spec,
-                state: running,
-                restarts,
-                pid,
-                last_error,
+                state: lifecycle.running,
+                restarts: lifecycle.restarts,
+                pid: lifecycle.pid,
+                last_error: lifecycle.last_error,
+                phase: lifecycle.phase,
+                direct_tx,
+                stop_tx,
                 task,
             },
         );
     }
 
-    /// Stop a plugin by name.
-    pub fn stop(&self, name: &str) -> Result<()> {
+    /// Stop a plugin by name and wait for its graceful shutdown handshake.
+    pub async fn stop(&self, name: &str) -> Result<()> {
         let removed = self.plugins.lock().remove(name);
         match removed {
             Some(plugin) => {
-                plugin.stop();
+                plugin.shutdown().await;
                 info!(plugin = %name, "plugin stopped");
                 Ok(())
             }
@@ -390,24 +556,32 @@ impl PluginHost {
         }
     }
 
-    /// Stop all plugins.
+    /// Signal every plugin to stop without waiting. Useful for `Drop` and for
+    /// synchronous reconcile paths, where a new spec may replace the old task.
     pub fn stop_all(&self) {
-        let _ = self.shutdown_tx.send(true);
         let plugins = std::mem::take(&mut *self.plugins.lock());
         for (_, plugin) in plugins {
-            plugin.stop();
+            plugin.request_stop();
         }
     }
 
-    /// Restart a plugin.
-    pub fn restart(&self, name: &str) -> Result<()> {
+    /// Stop every plugin and wait for each graceful shutdown.
+    pub async fn shutdown_all(&self) {
+        let plugins = std::mem::take(&mut *self.plugins.lock());
+        for (_, plugin) in plugins {
+            plugin.shutdown().await;
+        }
+    }
+
+    /// Restart a plugin using its current spec.
+    pub async fn restart(&self, name: &str) -> Result<()> {
         let spec = self
             .plugins
             .lock()
             .get(name)
             .map(|plugin| plugin.spec.clone())
             .ok_or_else(|| FluxError::PluginNotFound(name.to_string()))?;
-        self.stop(name)?;
+        self.stop(name).await?;
         self.start(spec);
         Ok(())
     }
@@ -420,6 +594,8 @@ impl PluginHost {
             .map(|plugin| {
                 json!({
                     "name": plugin.spec.name,
+                    "runtime": plugin.spec.runtime(),
+                    "state": plugin.phase(),
                     "running": plugin.is_running(),
                     "restarts": plugin.restart_count(),
                     "pid": *plugin.pid.lock(),
@@ -429,56 +605,207 @@ impl PluginHost {
             .collect()
     }
 
-    /// Forward an event to a specific plugin (bypassing subscriptions).
+    /// Forward an event only to one plugin, bypassing its subscription list.
     pub fn notify(&self, name: &str, event: Event) -> Result<()> {
-        let _ = name;
-        // Events normally flow through the bus; direct notifications are useful
-        // for plugin-to-plugin messaging. Emitting on the bus keeps the design
-        // simple and preserves ordering.
-        self.state.emit(event);
-        Ok(())
+        let sender = self
+            .plugins
+            .lock()
+            .get(name)
+            .map(|plugin| plugin.direct_tx.clone())
+            .ok_or_else(|| FluxError::PluginNotFound(name.to_string()))?;
+        sender.send(event).map_err(|_| {
+            FluxError::Plugin(format!("plugin `{name}` is not accepting direct events"))
+        })
     }
 }
 
 impl Drop for PluginHost {
     fn drop(&mut self) {
-        let _ = self.shutdown_tx.send(true);
+        let plugins = std::mem::take(&mut *self.plugins.lock());
+        for (_, plugin) in plugins {
+            plugin.request_stop();
+        }
     }
 }
 
-async fn run_plugin(
+async fn run_script_plugin(
     spec: PluginSpec,
     state: StateHandle,
-    running: Arc<AtomicBool>,
-    restarts: Arc<std::sync::atomic::AtomicU32>,
-    pid: Arc<parking_lot::Mutex<Option<u32>>>,
-    last_error: Arc<parking_lot::Mutex<Option<String>>>,
+    context: ScriptContext,
+    lifecycle: PluginLifecycle,
     shutdown_rx: &mut watch::Receiver<bool>,
+    direct_rx: &mut mpsc::UnboundedReceiver<Event>,
 ) {
+    let PluginLifecycle {
+        running,
+        last_error,
+        phase,
+        ..
+    } = lifecycle;
     let name = spec.name.clone();
     let mut bus = state.bus().subscribe();
-    let mut backoff = Duration::from_secs(spec.config.restart_delay.max(1));
+    running.store(true, Ordering::Relaxed);
+    *phase.lock() = PluginPhase::Running;
+
+    let started = Event::custom("plugin_started", json!({"name": name.clone()}));
+    invoke_script_plugin(&spec, &state, &context, &started)
+        .await
+        .map_or_else(
+            |error| {
+                *last_error.lock() = Some(error.to_string());
+                warn!(plugin = %name, %error, "script plugin initial run failed");
+            },
+            |_| *last_error.lock() = None,
+        );
+
+    let tick_interval = spec.config.tick_interval.map(Duration::from_secs);
+    let mut ticker = tick_interval.map(tokio::time::interval);
+    if let Some(ticker) = ticker.as_mut() {
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        ticker.tick().await;
+    }
 
     loop {
         if *shutdown_rx.borrow() {
             break;
         }
 
-        let mut process = match PluginProcess::spawn(&spec).await {
+        let (event, direct) = tokio::select! {
+            received = bus.recv() => {
+                match received {
+                    Ok(event) => ((*event).clone(), false),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        warn!(plugin = %name, skipped, "script plugin event subscriber lagged");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            direct = direct_rx.recv() => {
+                match direct {
+                    Some(event) => (event, true),
+                    None => break,
+                }
+            }
+            _ = async {
+                if let Some(ticker) = ticker.as_mut() {
+                    ticker.tick().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => (Event::new(EventKind::Custom("tick".into()), json!({})), false),
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    break;
+                }
+                continue;
+            }
+        };
+
+        if !direct && event.name() != "tick" && !spec.subscribes_to(&event) {
+            continue;
+        }
+
+        match invoke_script_plugin(&spec, &state, &context, &event).await {
+            Ok(()) => *last_error.lock() = None,
+            Err(error) => {
+                *last_error.lock() = Some(error.to_string());
+                warn!(
+                    plugin = %name,
+                    event = event.name(),
+                    %error,
+                    "script plugin event failed"
+                );
+            }
+        }
+    }
+
+    running.store(false, Ordering::Relaxed);
+    *phase.lock() = PluginPhase::Stopped;
+    info!(plugin = %name, "script plugin stopped");
+}
+
+async fn invoke_script_plugin(
+    spec: &PluginSpec,
+    state: &StateHandle,
+    context: &ScriptContext,
+    event: &Event,
+) -> Result<()> {
+    let mut invocation =
+        ScriptInvocation::new(spec.name.clone(), event.name(), spec.script_command()?)
+            .with_payload(event.payload.clone())
+            .with_runtime(spec.runtime());
+    invocation.environment = spec.config.env.clone();
+    invocation.environment.extend(event.environment.clone());
+    invocation
+        .environment
+        .insert("FLUXBAR_PLUGIN".into(), spec.name.clone());
+    if let Some(directory) = &spec.config.working_dir {
+        invocation.working_dir = Some(directory.clone());
+    }
+
+    let output = run_script(context, &invocation).await?;
+    if let Some(log) = &output.result.log {
+        info!(plugin = %spec.name, "{log}");
+    }
+    if !output.result.updates.is_empty() {
+        state.apply_plugin_updates(&output.result.updates)?;
+    }
+    for emitted in &output.result.events {
+        state.emit(
+            Event::custom(emitted.name.clone(), emitted.payload.clone())
+                .with_source(spec.name.clone()),
+        );
+    }
+    debug!(
+        plugin = %spec.name,
+        event = event.name(),
+        sender = %sketchybar_sender(event.name()),
+        "script plugin executed"
+    );
+    Ok(())
+}
+
+async fn run_plugin(
+    spec: PluginSpec,
+    state: StateHandle,
+    context: ScriptContext,
+    lifecycle: PluginLifecycle,
+    shutdown_rx: &mut watch::Receiver<bool>,
+    direct_rx: &mut mpsc::UnboundedReceiver<Event>,
+) {
+    let PluginLifecycle {
+        running,
+        restarts,
+        pid,
+        last_error,
+        phase,
+    } = lifecycle;
+    let name = spec.name.clone();
+    let mut bus = state.bus().subscribe();
+    let base_backoff = Duration::from_secs(spec.config.restart_delay.max(1));
+    let mut backoff = base_backoff;
+
+    loop {
+        if *shutdown_rx.borrow() {
+            break;
+        }
+
+        *phase.lock() = PluginPhase::Starting;
+        let mut process = match PluginProcess::spawn(&spec, &context).await {
             Ok(process) => process,
             Err(error) => {
                 *last_error.lock() = Some(error.to_string());
                 error!(plugin = %name, %error, "failed to start plugin");
-                if !spec.config.auto_restart {
-                    break;
-                }
-                if !wait_or_shutdown(backoff, shutdown_rx).await {
-                    break;
-                }
-                if spec.config.max_restarts > 0
-                    && restarts.load(Ordering::Relaxed) >= spec.config.max_restarts
+                if !spec.config.auto_restart
+                    || (spec.config.max_restarts > 0
+                        && restarts.load(Ordering::Relaxed) >= spec.config.max_restarts)
                 {
-                    error!(plugin = %name, "restart limit reached");
+                    *phase.lock() = PluginPhase::Failed;
+                    break;
+                }
+                *phase.lock() = PluginPhase::Backoff;
+                if !wait_or_shutdown(backoff, shutdown_rx).await {
                     break;
                 }
                 restarts.fetch_add(1, Ordering::Relaxed);
@@ -490,94 +817,103 @@ async fn run_plugin(
         *pid.lock() = process.pid();
         running.store(true, Ordering::Relaxed);
         *last_error.lock() = None;
+        *phase.lock() = PluginPhase::Running;
         let session_started = std::time::Instant::now();
 
-        // Initialise the plugin with its config.
+        // A failed init is a startup failure, not a usable running plugin.
         let init_params = json!({
             "name": name,
             "config": spec.config.config,
             "subscribe": spec.config.subscribe,
             "version": env!("CARGO_PKG_VERSION"),
         });
-        if let Err(error) = process.request("init", init_params).await {
-            warn!(plugin = %name, %error, "plugin init failed");
-            *last_error.lock() = Some(error.to_string());
-        }
+        let init_failed = match process.request("init", init_params).await {
+            Ok(_) => false,
+            Err(error) => {
+                *last_error.lock() = Some(error.to_string());
+                warn!(plugin = %name, %error, "plugin init failed");
+                true
+            }
+        };
 
-        let tick_interval = spec.config.tick_interval.map(Duration::from_secs);
-        let mut ticker = tick_interval.map(tokio::time::interval);
-        if let Some(ticker) = ticker.as_mut() {
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            // Consume the immediate first tick.
-            ticker.tick().await;
-        }
-
-        let mut crashed = false;
-        loop {
-            if *shutdown_rx.borrow() {
-                break;
+        if !init_failed {
+            let tick_interval = spec.config.tick_interval.map(Duration::from_secs);
+            let mut ticker = tick_interval.map(tokio::time::interval);
+            if let Some(ticker) = ticker.as_mut() {
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                ticker.tick().await;
             }
 
-            let event = tokio::select! {
-                received = bus.recv() => {
-                    match received {
-                        Ok(event) => Some((*event).clone()),
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            warn!(plugin = %name, skipped, "plugin event subscriber lagged");
-                            continue;
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
+            loop {
+                if *shutdown_rx.borrow() {
+                    break;
                 }
-                _ = async {
-                    if let Some(ticker) = ticker.as_mut() {
-                        ticker.tick().await;
-                    } else {
-                        std::future::pending::<()>().await;
+
+                let (event, direct) = tokio::select! {
+                    received = bus.recv() => {
+                        match received {
+                            Ok(event) => ((*event).clone(), false),
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                warn!(plugin = %name, skipped, "plugin event subscriber lagged");
+                                continue;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
                     }
-                } => None,
-                _ = shutdown_rx.changed() => {
-                    if *shutdown_rx.borrow() {
-                        break;
+                    direct = direct_rx.recv() => {
+                        match direct {
+                            Some(event) => (event, true),
+                            None => break,
+                        }
                     }
+                    _ = async {
+                        if let Some(ticker) = ticker.as_mut() {
+                            ticker.tick().await;
+                        } else {
+                            std::future::pending::<()>().await;
+                        }
+                    } => (Event::new(EventKind::Custom("tick".into()), json!({})), false),
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+
+                if !direct && event.name() != "tick" && !spec.subscribes_to(&event) {
                     continue;
                 }
-            };
 
-            let event =
-                event.unwrap_or_else(|| Event::new(EventKind::Custom("tick".into()), json!({})));
-            if event.name() != "tick" && !spec.subscribes_to(&event) {
-                continue;
-            }
+                let params = json!({
+                    "kind": event.name(),
+                    "payload": event.payload,
+                    "timestamp": event.timestamp,
+                    "source": event.source,
+                });
 
-            let params = json!({
-                "kind": event.name(),
-                "payload": event.payload,
-                "timestamp": event.timestamp,
-                "source": event.source,
-            });
-
-            match process.request("event", params).await {
-                Ok(result) => {
-                    if let Some(log) = result.log {
-                        info!(plugin = %name, "{log}");
-                    }
-                    if !result.updates.is_empty() {
-                        if let Err(error) = state.apply_plugin_updates(&result.updates) {
-                            warn!(plugin = %name, %error, "failed to apply plugin updates");
+                match process.request("event", params).await {
+                    Ok(result) => {
+                        if let Some(log) = result.log {
+                            info!(plugin = %name, "{log}");
+                        }
+                        if !result.updates.is_empty() {
+                            if let Err(error) = state.apply_plugin_updates(&result.updates) {
+                                warn!(plugin = %name, %error, "failed to apply plugin updates");
+                            }
+                        }
+                        for emitted in result.events {
+                            state.emit(
+                                Event::custom(emitted.name, emitted.payload)
+                                    .with_source(name.clone()),
+                            );
                         }
                     }
-                    for emitted in result.events {
-                        state.emit(
-                            Event::custom(emitted.name, emitted.payload).with_source(name.clone()),
-                        );
+                    Err(error) => {
+                        *last_error.lock() = Some(error.to_string());
+                        error!(plugin = %name, %error, "plugin request failed");
+                        break;
                     }
-                }
-                Err(error) => {
-                    *last_error.lock() = Some(error.to_string());
-                    error!(plugin = %name, %error, "plugin request failed");
-                    crashed = true;
-                    break;
                 }
             }
         }
@@ -590,24 +926,29 @@ async fn run_plugin(
             break;
         }
 
-        if !crashed && !spec.config.auto_restart {
-            break;
+        // A session that survived the stable window is no longer part of a
+        // crash loop. Reset both the consecutive counter and the backoff.
+        if session_started.elapsed() >= STABLE_RUN {
+            restarts.store(0, Ordering::Relaxed);
+            backoff = base_backoff;
+            debug!(plugin = %name, "restart counter reset after stable run");
         }
 
-        if spec.config.max_restarts > 0
-            && restarts.load(Ordering::Relaxed) >= spec.config.max_restarts
+        if !spec.config.auto_restart
+            || (spec.config.max_restarts > 0
+                && restarts.load(Ordering::Relaxed) >= spec.config.max_restarts)
         {
-            error!(plugin = %name, "restart limit reached");
+            if !spec.config.auto_restart {
+                debug!(plugin = %name, "auto_restart is disabled");
+            } else {
+                error!(plugin = %name, "restart limit reached");
+            }
+            *phase.lock() = PluginPhase::Failed;
             break;
         }
 
         restarts.fetch_add(1, Ordering::Relaxed);
-        // A plugin that ran for a while before crashing gets a fresh backoff
-        // instead of inheriting a long delay from an earlier crash loop.
-        if session_started.elapsed() >= Duration::from_secs(60) {
-            backoff = Duration::from_secs(spec.config.restart_delay.max(1));
-            debug!(plugin = %name, "backoff reset after stable run");
-        }
+        *phase.lock() = PluginPhase::Backoff;
         warn!(
             plugin = %name,
             delay = ?backoff,
@@ -617,6 +958,12 @@ async fn run_plugin(
             break;
         }
         backoff = (backoff * 2).min(Duration::from_secs(60));
+    }
+
+    running.store(false, Ordering::Relaxed);
+    *pid.lock() = None;
+    if *phase.lock() != PluginPhase::Failed {
+        *phase.lock() = PluginPhase::Stopped;
     }
 }
 
@@ -648,11 +995,146 @@ mod tests {
         };
         let spec = PluginSpec::new("all", config);
         assert!(spec.subscribes_to(&Event::custom("anything", json!({}))));
+        assert!(!spec.subscribes_to(&Event::custom("item_updated", json!({}))));
+        assert!(!spec.subscribes_to(&Event::custom("item_added", json!({}))));
+        assert!(spec.subscribes_to(&Event::custom("mouse.clicked", json!({}))));
     }
 
     #[test]
     fn empty_subscription_receives_nothing() {
         let spec = PluginSpec::new("test", PluginConfig::default());
         assert!(!spec.subscribes_to(&Event::custom("tick", json!({}))));
+    }
+
+    #[tokio::test]
+    async fn reconcile_adds_removes_and_restarts_plugins() {
+        let state = StateHandle::new(crate::config::Config::default());
+        let host = PluginHost::new(state);
+        let spec = PluginSpec::new(
+            "reconcile",
+            PluginConfig {
+                command: Some("/bin/true".into()),
+                auto_restart: false,
+                ..PluginConfig::default()
+            },
+        );
+        let specs = BTreeMap::from([("reconcile".into(), spec.clone())]);
+
+        assert_eq!(host.reconcile(specs.clone()), (1, 0));
+        assert_eq!(host.list().len(), 1);
+        assert_eq!(host.reconcile(specs.clone()), (0, 0));
+
+        let mut changed = specs.clone();
+        changed.get_mut("reconcile").unwrap().config.args = vec!["--changed".into()];
+        assert_eq!(host.reconcile(changed), (1, 1));
+
+        assert_eq!(host.reconcile(BTreeMap::new()), (0, 1));
+        assert!(host.list().is_empty());
+        assert_eq!(host.reconcile(specs), (1, 0));
+        host.shutdown_all().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn direct_notifications_are_targeted_and_host_can_restart() {
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let script = dir.path().join("plugin.bin");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"init"'*) printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{}}" ;;
+    *'"method":"event"'*) printf '%s\n' "$line" >> "$EVENT_LOG"; printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{}}" ;;
+    *'"method":"shutdown"'*) exit 0 ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let spec = |name: &str, log: &std::path::Path| {
+            let mut config = PluginConfig {
+                command: Some(script.to_string_lossy().into_owned()),
+                ..PluginConfig::default()
+            };
+            config
+                .env
+                .insert("EVENT_LOG".into(), log.to_string_lossy().into_owned());
+            PluginSpec::new(name, config)
+        };
+        let log_one = dir.path().join("one.log");
+        let log_two = dir.path().join("two.log");
+        let state = StateHandle::new(crate::config::Config::default());
+        let host = PluginHost::new(state);
+        host.start(spec("one", &log_one));
+        host.start(spec("two", &log_two));
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let list = host.list();
+                if list.len() == 2
+                    && list
+                        .iter()
+                        .all(|plugin| plugin["state"].as_str() == Some("running"))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        host.notify(
+            "one",
+            Event::custom("direct-event", json!({"target": "one"})),
+        )
+        .unwrap();
+        assert!(
+            host.notify("missing", Event::custom("direct-event", json!({})))
+                .is_err()
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let one = std::fs::read_to_string(&log_one).unwrap_or_default();
+                if one.contains("direct-event") {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !std::fs::read_to_string(&log_two)
+                .unwrap_or_default()
+                .contains("direct-event")
+        );
+
+        host.stop_all();
+        assert!(host.list().is_empty());
+        let log_three = dir.path().join("three.log");
+        host.start(spec("three", &log_three));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if host
+                    .list()
+                    .iter()
+                    .any(|plugin| plugin["state"].as_str() == Some("running"))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        host.shutdown_all().await;
     }
 }

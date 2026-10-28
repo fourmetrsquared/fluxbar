@@ -9,13 +9,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::time::Duration;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 /// JSON-RPC version string.
 pub const JSONRPC_VERSION: &str = "2.0";
+
+/// Maximum size of one newline-delimited JSON-RPC message.
+///
+/// The limit applies in both directions so a malformed peer cannot make the
+/// daemon or a client allocate an unbounded amount of memory.
+pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+
+/// Maximum number of concurrent IPC connections. Excess clients are closed
+/// immediately instead of consuming an unbounded number of tasks.
+const MAX_CONNECTIONS: usize = 64;
+
+/// Close idle connections so abandoned clients cannot accumulate.
+const CONNECTION_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// JSON-RPC request id.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -122,6 +136,7 @@ pub struct IpcServer {
     path: PathBuf,
     handler: std::sync::Arc<dyn RequestHandler>,
     shutdown: Option<oneshot::Sender<()>>,
+    connections: std::sync::Arc<Semaphore>,
 }
 
 impl IpcServer {
@@ -135,6 +150,14 @@ impl IpcServer {
             // Only remove if it is actually a socket; refuse to clobber real files.
             let meta = std::fs::symlink_metadata(&path)?;
             if meta.file_type().is_socket() {
+                // Never unlink a live daemon's socket. A connect attempt is the
+                // cheapest portable liveness check for a Unix socket.
+                if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+                    return Err(FluxError::invalid(format!(
+                        "another FluxBar instance is already listening at {}",
+                        path.display()
+                    )));
+                }
                 std::fs::remove_file(&path)?;
             } else {
                 return Err(FluxError::invalid(format!(
@@ -147,6 +170,7 @@ impl IpcServer {
             path,
             handler,
             shutdown: None,
+            connections: std::sync::Arc::new(Semaphore::new(MAX_CONNECTIONS)),
         })
     }
 
@@ -157,6 +181,12 @@ impl IpcServer {
     /// Run the accept loop until the shutdown signal fires.
     pub async fn run(mut self) -> Result<()> {
         let listener = UnixListener::bind(&self.path)?;
+        if let Err(error) = restrict_socket_permissions(&self.path) {
+            // Do not leave a world-accessible control socket behind if the
+            // permission change failed.
+            remove_socket_file(&self.path);
+            return Err(error.into());
+        }
         info!(path = %self.path.display(), "IPC server listening");
 
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
@@ -167,8 +197,14 @@ impl IpcServer {
                 accepted = listener.accept() => {
                     match accepted {
                         Ok((stream, _addr)) => {
+                            let Ok(permit) = self.connections.clone().try_acquire_owned() else {
+                                warn!("too many IPC connections; rejecting client");
+                                drop(stream);
+                                continue;
+                            };
                             let handler = self.handler.clone();
                             tokio::spawn(async move {
+                                let _permit = permit;
                                 if let Err(error) = serve_connection(stream, handler).await {
                                     debug!(%error, "IPC connection closed");
                                 }
@@ -187,7 +223,7 @@ impl IpcServer {
         }
 
         // Best-effort cleanup of the socket file.
-        let _ = std::fs::remove_file(&self.path);
+        remove_socket_file(&self.path);
         Ok(())
     }
 
@@ -201,7 +237,15 @@ impl IpcServer {
 
 impl Drop for IpcServer {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        remove_socket_file(&self.path);
+    }
+}
+
+fn remove_socket_file(path: &Path) {
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if meta.file_type().is_socket() {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -210,9 +254,28 @@ async fn serve_connection(
     handler: std::sync::Arc<dyn RequestHandler>,
 ) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let mut reader = BufReader::new(reader);
 
-    while let Some(line) = lines.next_line().await? {
+    loop {
+        let line = match tokio::time::timeout(
+            CONNECTION_IDLE_TIMEOUT,
+            read_line_limited(&mut reader, MAX_MESSAGE_BYTES),
+        )
+        .await
+        {
+            Ok(Ok(Some(line))) => line,
+            Ok(Ok(None)) | Err(_) => break,
+            Ok(Err(error)) => {
+                let response = RpcResponse::failure(
+                    RequestId::Null,
+                    codes::INVALID_REQUEST,
+                    error.to_string(),
+                );
+                write_response(&mut writer, &response).await?;
+                break;
+            }
+        };
+
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -231,13 +294,85 @@ async fn serve_connection(
             }
         };
 
-        let mut encoded = serde_json::to_vec(&response)?;
-        encoded.push(b'\n');
-        writer.write_all(&encoded).await?;
-        writer.flush().await?;
+        write_response(&mut writer, &response).await?;
     }
 
     Ok(())
+}
+
+async fn write_response(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    response: &RpcResponse,
+) -> Result<()> {
+    let mut encoded = serde_json::to_vec(response)?;
+    if encoded.len() > MAX_MESSAGE_BYTES {
+        encoded = serde_json::to_vec(&RpcResponse::failure(
+            RequestId::Null,
+            codes::INTERNAL_ERROR,
+            format!("response exceeds {MAX_MESSAGE_BYTES} bytes"),
+        ))?;
+    }
+    encoded.push(b'\n');
+    writer.write_all(&encoded).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Read one newline-delimited message without ever buffering more than `max`
+/// bytes. The returned string has the trailing `\n` and optional `\r` removed.
+pub(crate) async fn read_line_limited<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    max: usize,
+) -> std::io::Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let take = newline.unwrap_or(available.len());
+        if line.len().saturating_add(take) > max {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("message exceeds {max} bytes"),
+            ));
+        }
+        line.extend_from_slice(&available[..take]);
+        reader.consume(take + usize::from(newline.is_some()));
+        if newline.is_some() {
+            break;
+        }
+    }
+
+    if line.last() == Some(&b'\r') {
+        line.pop();
+    }
+    String::from_utf8(line).map(Some).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "message is not valid UTF-8",
+        )
+    })
+}
+
+/// Restrict the control socket to the current user. The containing directory
+/// is also expected to be private; the socket mode is the last line of defence.
+fn restrict_socket_permissions(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
 }
 
 /// Client used by the CLI and plugins.
@@ -250,7 +385,13 @@ pub struct IpcClient {
 impl IpcClient {
     /// Connect to a running FluxBar instance.
     pub async fn connect(path: impl AsRef<Path>) -> Result<Self> {
-        let stream = UnixStream::connect(path.as_ref()).await?;
+        let stream =
+            tokio::time::timeout(Duration::from_secs(5), UnixStream::connect(path.as_ref()))
+                .await
+                .map_err(|_| FluxError::Rpc {
+                    code: codes::INTERNAL_ERROR,
+                    message: "timed out connecting to the FluxBar socket".into(),
+                })??;
         let (reader, writer) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(reader),
@@ -273,33 +414,41 @@ impl IpcClient {
 
         let mut encoded = serde_json::to_vec(&request)?;
         encoded.push(b'\n');
-        self.writer.write_all(&encoded).await?;
-        self.writer.flush().await?;
-
-        let mut line = String::new();
-        let read = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            self.reader.read_line(&mut line),
-        )
-        .await;
-        let read = read.map_err(|_| FluxError::Rpc {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            self.writer.write_all(&encoded).await?;
+            self.writer.flush().await
+        })
+        .await
+        .map_err(|_| FluxError::Rpc {
             code: codes::INTERNAL_ERROR,
-            message: "timed out waiting for response".into(),
+            message: "timed out sending request to FluxBar".into(),
         })??;
 
-        if read == 0 {
-            return Err(FluxError::Rpc {
-                code: codes::INTERNAL_ERROR,
-                message: "server closed the connection".into(),
-            });
-        }
+        let line = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            read_line_limited(&mut self.reader, MAX_MESSAGE_BYTES),
+        )
+        .await
+        .map_err(|_| FluxError::Rpc {
+            code: codes::INTERNAL_ERROR,
+            message: "timed out waiting for response".into(),
+        })??
+        .ok_or_else(|| FluxError::Rpc {
+            code: codes::INTERNAL_ERROR,
+            message: "server closed the connection".into(),
+        })?;
 
-        // Skip notifications / unrelated ids.
         let response: RpcResponse = serde_json::from_str(line.trim())?;
         if let Some(error) = response.error {
             return Err(FluxError::Rpc {
                 code: error.code,
                 message: error.message,
+            });
+        }
+        if response.id != RequestId::Number(id) {
+            return Err(FluxError::Rpc {
+                code: codes::INTERNAL_ERROR,
+                message: "server returned a response with the wrong request id".into(),
             });
         }
         Ok(response.result.unwrap_or(Value::Null))
@@ -318,7 +467,20 @@ pub fn default_socket_path() -> PathBuf {
         let dir = runtime.runtime_dir().unwrap_or_else(|| runtime.cache_dir());
         return dir.join("fluxbar.sock");
     }
-    std::env::temp_dir().join("fluxbar.sock")
+    // Never fall back to a shared directory such as /tmp: another local user
+    // could pre-create or replace the socket. HOME is private to the user and
+    // is only used when the platform directory lookup is unavailable.
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join(".cache")
+            .join("fluxbar")
+            .join("fluxbar.sock");
+    }
+    // Last resort for environments without HOME and without platform
+    // directories. The socket is still chmod 0600; set an explicit --socket
+    // path if the temporary directory is shared.
+    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
+    std::env::temp_dir().join(format!("fluxbar-{user}.sock"))
 }
 
 /// Helper used by tests and tooling: run a mock client/server pair.
@@ -350,6 +512,7 @@ pub type CommandSender = mpsc::Sender<(RpcRequest, PendingRequest)>;
 mod tests {
     use super::*;
     use serde_json::json;
+    use tokio::io::AsyncWriteExt;
 
     struct EchoHandler;
 
@@ -365,6 +528,19 @@ mod tests {
 
         fn methods(&self) -> Vec<&'static str> {
             vec!["system.ping", "echo"]
+        }
+    }
+
+    struct HugeHandler;
+
+    #[async_trait::async_trait]
+    impl RequestHandler for HugeHandler {
+        async fn handle(&self, _method: &str, _params: Value) -> Result<Value> {
+            Ok(json!({ "data": "x".repeat(MAX_MESSAGE_BYTES + 1) }))
+        }
+
+        fn methods(&self) -> Vec<&'static str> {
+            vec!["huge"]
         }
     }
 
@@ -387,6 +563,94 @@ mod tests {
 
         let error = client.call("unknown", json!({})).await.unwrap_err();
         assert_eq!(error.rpc_code(), -32601);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn socket_is_owner_only() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir = tempfile::TempDir::new().unwrap();
+            let path = dir.path().join("private.sock");
+            let handle = spawn_test_server(std::sync::Arc::new(EchoHandler), path.clone()).await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+            handle.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn refuses_to_replace_a_live_socket() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("live.sock");
+        let handle = spawn_test_server(std::sync::Arc::new(EchoHandler), path.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let error = match IpcServer::bind(path.clone(), std::sync::Arc::new(EchoHandler)) {
+            Ok(_) => panic!("a live socket must not be replaced"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("already listening"));
+        assert!(path.exists());
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn removes_a_stale_socket() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("stale.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        drop(listener);
+        assert!(path.exists());
+
+        let server = IpcServer::bind(path.clone(), std::sync::Arc::new(EchoHandler)).unwrap();
+        assert_eq!(server.path(), path.as_path());
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_messages() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("limit.sock");
+        let handle = spawn_test_server(std::sync::Arc::new(EchoHandler), path.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let mut stream = UnixStream::connect(&path).await.unwrap();
+        stream
+            .write_all(&vec![b'a'; MAX_MESSAGE_BYTES + 1])
+            .await
+            .unwrap();
+
+        let mut reader = BufReader::new(stream);
+        let line = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            read_line_limited(&mut reader, MAX_MESSAGE_BYTES),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        let response: RpcResponse = serde_json::from_str(&line).unwrap();
+        assert_eq!(response.error.unwrap().code, codes::INVALID_REQUEST);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_responses() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("response.sock");
+        let handle = spawn_test_server(std::sync::Arc::new(HugeHandler), path.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let mut client = IpcClient::connect(&path).await.unwrap();
+        let error = client.call("huge", json!({})).await.unwrap_err();
+        assert_eq!(error.rpc_code(), codes::INTERNAL_ERROR);
 
         handle.abort();
     }

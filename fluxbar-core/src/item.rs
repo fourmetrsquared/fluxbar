@@ -147,6 +147,17 @@ fn default_true() -> bool {
     true
 }
 
+/// Who owns an item's existence and static configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ItemOrigin {
+    /// Created from `fluxbar.toml`; a config reload reconciles it.
+    #[default]
+    Config,
+    /// Created at runtime through IPC/CLI; config reloads must preserve it.
+    Runtime,
+}
+
 /// A fully described bar item.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
@@ -155,6 +166,9 @@ pub struct Item {
     pub position: Position,
     pub config: ItemConfig,
     pub state: ItemState,
+    /// Ownership source used by transactional config reloads.
+    #[serde(default)]
+    pub origin: ItemOrigin,
     #[serde(skip)]
     pub bounds: Option<Rect>,
 }
@@ -171,6 +185,7 @@ impl Item {
                 ..ItemState::default()
             },
             config,
+            origin: ItemOrigin::Config,
             bounds: None,
             name,
         }
@@ -305,6 +320,18 @@ mod tests {
         });
         assert_eq!(item.state.label, "42%");
         assert_eq!(item.state.progress, Some(100.0));
+
+        item.apply_update(ItemUpdate {
+            progress: Some(-5.0),
+            ..ItemUpdate::default()
+        });
+        assert_eq!(item.state.progress, Some(0.0));
+
+        item.apply_update(ItemUpdate {
+            progress: Some(f64::NAN),
+            ..ItemUpdate::default()
+        });
+        assert_eq!(item.state.progress, None);
     }
 
     #[test]

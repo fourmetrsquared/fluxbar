@@ -1,9 +1,10 @@
 //! [`Renderer`] implementation that forwards frames to the AppKit UI thread.
 
 use crate::app::{UiCommand, UiEvent};
+use crate::text::measure_text_with_font;
 use fluxbar_core::error::{FluxError, Result};
 use fluxbar_core::geometry::Size;
-use fluxbar_core::renderer::{RenderFrame, Renderer};
+use fluxbar_core::renderer::{RenderFrame, Renderer, TextMetrics};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -15,7 +16,8 @@ use std::sync::mpsc::{Receiver, Sender};
 pub struct MacRenderer {
     commands: Sender<UiCommand>,
     events: Mutex<Option<Receiver<UiEvent>>>,
-    size: Mutex<Size>,
+    screen: Mutex<Size>,
+    bar_height: Mutex<f64>,
 }
 
 impl MacRenderer {
@@ -29,7 +31,8 @@ impl MacRenderer {
         let renderer = Self {
             commands: command_tx,
             events: Mutex::new(Some(event_rx)),
-            size: Mutex::new(Size::new(width, height)),
+            screen: Mutex::new(Size::new(width, height)),
+            bar_height: Mutex::new(0.0),
         };
         (renderer, command_rx, event_tx)
     }
@@ -49,10 +52,8 @@ impl MacRenderer {
 
 impl Renderer for MacRenderer {
     fn render(&self, frame: &RenderFrame) -> Result<()> {
-        {
-            if let Ok(mut size) = self.size.lock() {
-                *size = Size::new(frame.bar_bounds.width(), frame.bar_bounds.height());
-            }
+        if let Ok(mut height) = self.bar_height.lock() {
+            *height = frame.bar_bounds.height();
         }
         self.send(UiCommand::Frame(Box::new(frame.clone())))
     }
@@ -62,13 +63,50 @@ impl Renderer for MacRenderer {
     }
 
     fn bar_height(&self) -> f64 {
-        self.size.lock().map(|size| size.height).unwrap_or(32.0)
+        self.bar_height.lock().map(|height| *height).unwrap_or(32.0)
     }
 
     fn screen_size(&self) -> Size {
-        self.size
+        self.screen
             .lock()
             .map(|size| *size)
             .unwrap_or(Size::new(1920.0, 1080.0))
+    }
+}
+
+impl TextMetrics for MacRenderer {
+    fn text_width(&self, text: &str, font: Option<&str>, font_size: f64) -> f64 {
+        measure_text_with_font(text, font, font_size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluxbar_core::config::Config;
+    use fluxbar_core::renderer::layout;
+    use fluxbar_core::state::BarState;
+
+    #[test]
+    fn text_metrics_use_exact_widths_and_cache_lookups() {
+        let (renderer, _commands, _events) = MacRenderer::new(1920.0, 1080.0);
+        let wide = renderer.text_width("WWWW", None, 13.0);
+        let narrow = renderer.text_width("iiii", None, 13.0);
+        assert!(wide > narrow);
+        assert_eq!(wide, renderer.text_width("WWWW", None, 13.0));
+        assert!(renderer.text_width("日本語", None, 13.0) > 0.0);
+        assert!(renderer.text_width("👋🏽", None, 13.0) > 0.0);
+    }
+
+    #[test]
+    fn rendering_keeps_the_screen_size() {
+        let (renderer, _commands, _events) = MacRenderer::new(1920.0, 1080.0);
+        let screen = Size::new(1920.0, 1080.0);
+        let frame = layout(&BarState::new(), &Config::default(), screen);
+
+        renderer.render(&frame).unwrap();
+
+        assert_eq!(renderer.screen_size(), screen);
+        assert_eq!(renderer.bar_height(), Config::default().bar.height);
     }
 }

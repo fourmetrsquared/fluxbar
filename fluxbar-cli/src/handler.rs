@@ -23,6 +23,8 @@ pub struct DaemonHandler {
     pub frames: Arc<AtomicU64>,
     pub shutdown: Arc<AtomicBool>,
     pub config_path: Option<PathBuf>,
+    pub bar_visible: Arc<AtomicBool>,
+    pub(crate) reload: Option<Arc<crate::daemon::RuntimeReload>>,
 }
 
 #[async_trait::async_trait]
@@ -37,6 +39,14 @@ impl RequestHandler for DaemonHandler {
             }
             "item.add" => self.item_add(params),
             "item.set" => self.item_set(params),
+            "item.configure" => self.item_configure(params),
+            "item.subscribe" => self.item_subscribe(params),
+            "item.rename" => {
+                let old = required_str(&params, "old")?;
+                let new = required_str(&params, "new")?;
+                let item = self.state.rename_item(&old, &new)?;
+                Ok(json!({"old": old, "new": item.name}))
+            }
             "item.remove" => {
                 let name = required_str(&params, "name")?;
                 let item = self.state.remove_item(&name)?;
@@ -69,32 +79,55 @@ impl RequestHandler for DaemonHandler {
                     .collect();
                 Ok(Value::Array(items))
             }
+            "event.add" => {
+                let name = required_str(&params, "name")?;
+                fluxbar_core::event::validate_name(&name)?;
+                Ok(json!({"added": name}))
+            }
             "event.trigger" => {
                 let name = required_str(&params, "name")?;
                 fluxbar_core::event::validate_name(&name)?;
                 let payload = params.get("payload").cloned().unwrap_or(Value::Null);
-                self.state
-                    .emit(Event::custom(name.clone(), payload).with_source("cli"));
+                let environment = params
+                    .get("environment")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|e| FluxError::invalid(format!("invalid environment: {e}")))?
+                    .unwrap_or_default();
+                self.state.emit(
+                    Event::custom(name.clone(), payload)
+                        .with_source("cli")
+                        .with_environment(environment),
+                );
                 Ok(json!({"triggered": name}))
+            }
+            "bar.configure" => self.bar_configure(params),
+            "defaults.configure" => {
+                let patch = params.get("config").cloned().unwrap_or_else(|| json!({}));
+                let defaults = self.state.configure_defaults(&patch)?;
+                Ok(serde_json::to_value(defaults)?)
             }
             "config.reload" => self.config_reload(),
             "config.path" => Ok(json!({"path": self.config_path})),
             "plugin.list" => Ok(Value::Array(self.plugins.list())),
             "plugin.restart" => {
                 let name = required_str(&params, "name")?;
-                self.plugins.restart(&name)?;
+                self.plugins.restart(&name).await?;
                 Ok(json!({"restarted": name}))
             }
             "plugin.stop" => {
                 let name = required_str(&params, "name")?;
-                self.plugins.stop(&name)?;
+                self.plugins.stop(&name).await?;
                 Ok(json!({"stopped": name}))
             }
             "bar.show" => {
+                self.bar_visible.store(true, Ordering::Relaxed);
                 self.renderer.set_visible(true)?;
                 Ok(json!({"visible": true}))
             }
             "bar.hide" => {
+                self.bar_visible.store(false, Ordering::Relaxed);
                 self.renderer.set_visible(false)?;
                 Ok(json!({"visible": false}))
             }
@@ -109,10 +142,16 @@ impl RequestHandler for DaemonHandler {
             "system.shutdown",
             "item.add",
             "item.set",
+            "item.configure",
+            "item.subscribe",
+            "item.rename",
             "item.remove",
             "item.get",
             "item.list",
+            "event.add",
             "event.trigger",
+            "bar.configure",
+            "defaults.configure",
             "config.reload",
             "config.path",
             "plugin.list",
@@ -204,16 +243,59 @@ impl DaemonHandler {
         }))
     }
 
+    fn item_configure(&self, params: Value) -> Result<Value> {
+        let name = required_str(&params, "name")?;
+        let patch = params.get("config").cloned().unwrap_or_else(|| json!({}));
+        let update: Option<ItemUpdate> = params
+            .get("update")
+            .filter(|value| !value.is_null())
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| FluxError::invalid(format!("invalid update: {error}")))?;
+        let item = self.state.configure_item(&name, &patch, update)?;
+        Ok(serde_json::to_value(item)?)
+    }
+
+    fn item_subscribe(&self, params: Value) -> Result<Value> {
+        let name = required_str(&params, "name")?;
+        let events: Vec<String> = params
+            .get("events")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| FluxError::invalid(format!("invalid events: {error}")))?
+            .unwrap_or_default();
+        let add = params.get("add").and_then(Value::as_bool).unwrap_or(true);
+        let item = self.state.subscribe_item(&name, &events, add)?;
+        Ok(json!({
+            "name": item.name,
+            "subscribe": item.config.subscribe,
+        }))
+    }
+
+    fn bar_configure(&self, params: Value) -> Result<Value> {
+        let patch = params.get("config").cloned().unwrap_or_else(|| json!({}));
+        let bar = self.state.configure_bar(&patch)?;
+        if let Some(hidden) = patch.get("hidden").and_then(Value::as_bool) {
+            self.bar_visible.store(!hidden, Ordering::Relaxed);
+            self.renderer.set_visible(!hidden)?;
+        }
+        Ok(serde_json::to_value(bar)?)
+    }
+
     fn config_reload(&self) -> Result<Value> {
-        let Some(path) = &self.config_path else {
-            return Err(FluxError::Config("no config file configured".into()));
-        };
-        let added = crate::daemon::reload_config(&self.state, &self.plugins, path)?;
-        self.state.emit(Event::custom(
-            "config_reload",
-            json!({"added_items": added}),
-        ));
-        Ok(json!({"reloaded": true, "added_items": added}))
+        let reload = self
+            .reload
+            .as_ref()
+            .ok_or_else(|| FluxError::Config("configuration reloading is not available".into()))?;
+        let report = reload.reload()?;
+        let payload = serde_json::to_value(&report)?;
+        self.state
+            .emit(Event::custom("config_reload", payload.clone()));
+        let mut response = payload;
+        response["reloaded"] = json!(true);
+        Ok(response)
     }
 }
 
@@ -273,6 +355,8 @@ mod tests {
             frames: Arc::new(AtomicU64::new(0)),
             shutdown: Arc::new(AtomicBool::new(false)),
             config_path: None,
+            bar_visible: Arc::new(AtomicBool::new(true)),
+            reload: None,
         }
     }
 

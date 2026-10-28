@@ -25,129 +25,110 @@ Unless stated otherwise, every item is done when:
 | Target | Theme | Exit criteria |
 | --- | --- | --- |
 | **v1.0.x** | Hardening | All P0 items closed; no known crash, socket lifecycle, or config-reload data loss. |
-| **v1.1** | Feature completion | Menu-bar aliases, absolute positioning, script items, brightness, themes, rich mouse actions, UDS plugins, multi-display, blur. |
+| **v1.1** | Feature completion | Menu-bar aliases, absolute positioning, brightness, themes, rich mouse actions, UDS plugins, multi-display, complete SketchyBar parity. |
 | **v2** | Platform and sandbox | Wasm plugins, stable renderer abstraction, Linux/Windows backends, formal performance and security posture. |
 
-## Suggested first slice (v1.0.x)
+## v1.0.x hardening status
 
-1. P0-01 vertical placement and `top_margin`.
-2. P0-02 text measurement and truncation.
-3. P0-03 progress rendering.
-4. P0-04 transactional config reload.
-5. P0-05 process lifecycle and socket safety.
-6. P0-06 plugin lifecycle correctness.
-7. Add the daemon integration harness from P3-01 while fixing the above.
+P0-01 through P0-06 are complete. The main remaining release-quality task is
+P3-01, the automated daemon integration harness; the current P0 regressions are
+covered by unit/integration tests plus the manual checks in
+[docs/RELEASE.md](docs/RELEASE.md).
 
 ---
 
 ## P0 — Correctness and security
 
-### [ ] P0-01 — Honor `bar.top_margin` and unify the coordinate model (`Fix`, macOS)
+### [x] P0-01 — Honor `bar.top_margin` and unify the coordinate model (`Fix`, macOS)
 
-- `layout()` adds `top_margin` to `bar_bounds`, but `MacApp::place()` always pins
-  the window to the visible screen edge. Item painting then subtracts
-  `bar_bounds`, so the configured margin effectively disappears.
-- Bottom placement and the notch area need the same treatment.
-- Decide on one model: layout produces screen coordinates; the platform layer
-  converts them to window origin and local drawing coordinates.
-- Acceptance: `top_margin` visibly moves the window for top and bottom bars;
-  items remain aligned; negative/zero/large values are validated; layout tests
-  cover top, bottom, notch-sized margins, and hidden menu bar.
+- Implemented `bar.top_margin` for top and bottom placement and added
+  `bar.horizontal_margin` for a centered floating capsule.
+- Layout owns screen-space `bar_bounds`; `MacApp` converts the origin to the
+  AppKit window frame and keeps item painting/hit-testing local to the window.
+- Also fixed the renderer accidentally replacing the screen size with the bar
+  size after the first frame.
+- Acceptance covered by layout tests for top/bottom margins, floating insets,
+  capped centered bars, and renderer screen-size retention.
 
-### [ ] P0-02 — Replace text-width guessing with real font measurement (`Fix`, macOS)
+### [x] P0-02 — Replace text-width guessing with real font measurement (`Fix`, macOS)
 
-- `measure_text()` in `fluxbar-macos/src/app.rs` calls
-  `sizeWithAttributes(None)` and explicitly ignores the supplied `NSFont`, so
-  all text is measured with the wrong font.
-- Core layout uses `estimate_text_width()`, while the renderer measures again
-  with AppKit. The two widths disagree, causing clipped labels, overlapping
-  items, and incorrect hit boxes.
-- Measure with the actual `NSFont`/`NSColor` attributes, cache results by
-  `(text, font, size)`, and feed measured widths back into layout (renderer
-  measurement callback or a post-layout adjustment pass). Apply `max_width`
-  with an ellipsis instead of allowing overflow.
-- Test ASCII, wide Latin, CJK, emoji, combining marks, and very long labels.
-- Acceptance: painted content stays inside item bounds within 1 point; hit
-  testing matches painted pixels; truncation works for fixed/max widths.
+- Added the `TextMetrics` hook to core layout. `layout()` keeps the heuristic
+  fallback for headless/tests, while `layout_with_metrics()` accepts the
+  platform measurer.
+- `MacRenderer` now measures with CoreText using the actual resolved `NSFont`
+  and caches `(text, font, size)` results. The daemon uses those exact widths
+  for item layout, so painted content and hit boxes share the same geometry.
+- Painting clamps content to the item's padded area, shrinks the label before
+  the icon, and uses `NSParagraphStyle` tail truncation so fixed/`max_width`
+  items get an ellipsis instead of overflowing.
+- Added tests for ASCII/wide Latin, CJK, emoji, combining marks, very long
+  labels, metric-aware layout, cache reuse and width clamping.
 
-### [ ] P0-03 — Fix hardcoded progress rendering (`Fix`, macOS)
+### [x] P0-03 — Fix hardcoded progress rendering (`Fix`, macOS)
 
-- `paint_progress()` always uses white, ignores item styling, reads
-  `frame.items.first()` for no reason, and paints over the graph and label
-  because no content region is reserved.
-- Add backward-compatible item options such as `progress_color`,
-  `progress_track_color`, `progress_height`, and `progress_position`
-  (`bottom`, `top`, `background`). Default to the label color if unset.
-- Reserve a dedicated strip that does not overlap the icon, label, or graph.
-  Progress and graph must be usable simultaneously.
-- Clamp and test 0, 100, NaN, negative, and out-of-range values.
-- Acceptance: no hardcoded colors; progress and content never overlap; config
-  docs and layout/renderer tests cover all positions.
+- Added `progress_color`, `progress_track_color`, `progress_height` and
+  `progress_position` (`bottom`/`top`/`background`) to item config. The fill
+  defaults to `label_color`; the track defaults to a 16% translucent fill.
+- `top`/`bottom` reserve a dedicated strip and inset the content rect for the
+  label, icon and graph, so all three can be used with progress simultaneously.
+  `background` paints a full-height fill behind the content.
+- Removed hardcoded white/height/position values, interpolate progress colors
+  during frame animations, and clamp non-finite/negative/out-of-range values.
+- SketchyBar `progress.color`, `progress.track_color`, `progress.height` and
+  `progress.position` map to the new fields. Docs and tests cover every
+  position, content/no-overlap geometry, color defaults, opacity and NaN.
 
-### [ ] P0-04 — Make configuration reload transactional and complete (`Fix`, core/CLI)
+### [x] P0-04 — Make configuration reload transactional and complete (`Fix`, core/CLI)
 
-Current `reload_config()` only adds new items and shallow-merges existing ones.
-It does not reconcile the rest of the running system:
+- `RuntimeReload::reload()` parses and validates the complete new file before
+  touching live state. A failed load leaves the previous configuration active.
+- Item ownership is explicit (`ItemOrigin::Config`/`Runtime`). Config-owned
+  items are added, updated (`kind`, `position`, `visible`, static label/icon,
+  inherited styles) or removed; runtime-created items survive reloads.
+- Plugin specs are reconciled by value: new plugins start, changed specs
+  restart, removed plugins stop, unchanged processes keep running.
+- Timers are rebuilt, the system monitor restarts only when `[system]` changes,
+  and bar geometry/visibility are applied from the new config.
+- `config.reload` returns a report (`added_items`, `updated_items`,
+  `removed_items`, `started_plugins`, `stopped_plugins`, `timers`,
+  `monitor_restarted`) and `fluxbar config reload` prints it.
+- Integration tests cover item add/update/remove, runtime ownership, timer and
+  monitor changes, bar visibility, plugin add/change/remove, and host restart
+  after `stop_all`.
 
-- existing item `kind`/`position` changes are ignored;
-- changed static labels/icons are written to `item.config` but not to
-  `item.state`, so the bar keeps showing the old text;
-- items removed from config stay on the bar forever;
-- removed plugins keep running; changed plugin specs are ignored because
-  `start_all()` skips running names;
-- timers are not recreated; system-monitor settings and `bar.hidden` are not
-  applied; `merge_item_config()` preserves only label/icon/background and can
-  lose intended resets.
-- Implement a real reconcile pass with explicit ownership (`config`, `CLI`,
-  `plugin`): add/update/remove config-owned items, preserve runtime-created
-  items, stop/restart changed plugins, remove deleted plugins, rebuild timers,
-  restart only the affected monitor tasks, and apply bar visibility/geometry.
-- Validate and build the complete new config before mutating live state, so a
-  failed reload leaves the previous configuration active.
-- Acceptance: a single `fluxbar trigger config_reload` or `config.reload`
-  applies label/kind/position/plugin/timer/monitor/bar changes and removes
-  deleted config entries; runtime-only items survive; integration tests cover
-  each case.
+### [x] P0-05 — Harden daemon lifecycle, signals, and socket handling (`Fix`, core/CLI)
 
-### [ ] P0-05 — Harden daemon lifecycle, signals, and socket handling (`Fix`, core/CLI)
+- Added `SIGINT`/`SIGTERM` handlers that flip the daemon shutdown flag; the
+  event loop then stops timers, the monitor, scripts, plugins and the UI through
+  the same path as `fluxbar stop`.
+- Added an advisory-locked PID file next to the socket, created `0600`. A
+  second daemon with the same socket is refused; a stale PID file left after a
+  crash is reused. The PID file is removed on normal exit.
+- `IpcServer::bind()` probes a live socket and refuses to unlink it; stale
+  sockets are recovered. The default runtime directory is `0700` and the socket
+  is `0600`. `IpcServer` has an RAII `Drop` guard that only removes a socket
+  file.
+- Tests cover PID cleanup, duplicate-instance refusal, stale PID reuse,
+  symlink rejection, and live/stale socket handling. Manual checks cover
+  `SIGINT`, `SIGTERM` and `fluxbar stop`.
 
-- There is no `SIGINT`/`SIGTERM` handling. Ctrl+C terminates the process
-  abruptly, leaving the socket and plugins to be cleaned up by the OS.
-- There is no PID file or lock. A second daemon can remove a live socket in
-  `IpcServer::bind()`, because any socket is treated as stale.
-- Socket cleanup is not RAII: aborting the server task or returning early can
-  leave the socket behind. The socket is created with the ambient umask.
-- Add graceful signal handling that stops timers/plugins, shuts down the UI,
-  and removes the socket on every exit path.
-- Probe an existing socket before unlinking it: connect/ping; if alive, refuse
-  to start with a clear error. Use a locked PID file with stale-process
-  detection.
-- Create the runtime directory with `0700` and the socket with `0600`.
-- Add an RAII socket guard so panics/errors do not leak files.
-- Acceptance: `SIGINT`, `SIGTERM`, and `fluxbar stop` all exit cleanly; a
-  second daemon cannot hijack a running one; stale sockets are recovered;
-  permissions are restrictive; integration tests cover all paths.
+### [x] P0-06 — Correct plugin lifecycle semantics (`Fix`, core)
 
-### [ ] P0-06 — Correct plugin lifecycle semantics (`Fix`, core)
-
-- `PluginHost::notify(name, event)` ignores `name` and broadcasts to every
-  subscriber.
-- A failed `init` request is only logged; the plugin remains marked running
-  and continues receiving events.
-- `max_restarts` counts total restarts, not consecutive crashes, and never
-  resets after stable operation. Only the backoff timer resets.
-- `stop_all()` trips a host-wide shutdown watch permanently; there is no way
-  to start plugins again afterward.
-- `stop()` aborts the task without a graceful `shutdown` handshake, and
-  `plugin.list` does not expose an explicit failed/backoff state.
-- Implement per-plugin cancellation, targeted notifications, consecutive
-  restart accounting with a stable-period reset, graceful shutdown with a
-  timeout, and a terminal `failed` state with `last_error`.
-- Decide and document whether `init` failure consumes a restart attempt.
-- Acceptance: targeted notify reaches one plugin; init failure surfaces in
-  `plugin.list` and follows the retry policy; restart limit resets after the
-  stable window; stop and stop-all are graceful and restartable; unit tests
-  cover each transition.
+- Each plugin now has its own stop watch and direct-event channel.
+  `PluginHost::notify(name, event)` delivers only to that plugin and bypasses
+  subscriptions; removed plugins stop and the host remains restartable.
+- A failed `init` is treated as a startup failure. It records `last_error`,
+  follows `auto_restart`/`max_restarts`, and never leaves the plugin marked
+  running.
+- `max_restarts` counts consecutive crashes. Both the counter and backoff reset
+  after 60 seconds of stable operation.
+- `stop`/`restart` send the JSON-RPC `shutdown` request and wait up to five
+  seconds before aborting. `shutdown_all()` is used on daemon exit;
+  `stop_all()` only signals tasks so synchronous reconcile paths do not block.
+- `plugin.list` exposes `starting`, `running`, `backoff`, `stopped` and
+  `failed` states plus `last_error`; the CLI table prints them.
+- Tests cover targeted direct events, host restart after `stop_all`, and
+  plugin add/remove/change reconciliation.
 
 ---
 
@@ -179,14 +160,13 @@ It does not reconcile the rest of the running system:
 ### [ ] P1-03 — Make layout robust under pressure (`Fix`, core/macOS)
 
 - Left and right groups can overlap the center group; items can overflow the
-  bar; `full_width = false` always anchors the 1200 pt bar at x=0 instead of
-  centering it; negative computed widths are possible with extreme padding.
+  bar; negative computed widths are possible with extreme padding.
 - Add an overflow policy: shrink/truncate low-priority items, hide overflow
   with a configurable indicator, or clip deterministically.
-- Center a non-full-width bar and expose an optional `max_width`.
+- Non-full-width bars are now centered and `horizontal_margin` controls the
+  floating inset; an optional `max_width` is still pending.
 - Acceptance: 100-item and zero-width stress tests produce no overlap outside
-  the chosen policy; center truncation is predictable; a non-full-width bar is
-  centered.
+  the chosen policy; center truncation is predictable.
 
 ### [ ] P1-04 — Add brightness events (FR-2.1) (`Feature`, system)
 
@@ -200,17 +180,14 @@ It does not reconcile the rest of the running system:
   polling when disabled; failure degrades silently with a debug log; docs
   describe API/permission limitations.
 
-### [ ] P1-05 — Implement script-backed items (`Feature`, core/CLI)
+### [x] P1-05 — Implement script-backed items (`Feature`, core/CLI)
 
-- `script` and `update_interval` are parsed but never executed.
-- Add a scheduler that runs each script with a timeout, captures stdout, and
-  applies either plain text to `label` or JSON
-  (`label`/`icon`/`progress`/`graph`/`status`/`visible`).
-- Deduplicate concurrent runs, kill hung children, log stderr at debug level,
-  and skip scripts whose items are absent. Document the security implications.
-- Acceptance: a script item updates at its interval, recovers from errors,
-  never blocks the daemon, and stops when the item is removed; tests use a
-  mock command.
+- Implemented `script`, `subscribe`, `update_interval` and `click_script` for
+  items, with a 60-second timeout, concurrent-run protection, stderr logging,
+  JSON output parsing and `sketchybar`/`fluxbar` shims on `PATH`.
+- Plain stdout is intentionally ignored; scripts emit JSON or call the
+  compatibility CLI.
+- Remaining polish: configurable timeout and richer per-script error state.
 
 ### [ ] P1-06 — Rich mouse bindings and plugin actions (FR-4.4) (`Feature`, core/macOS)
 
@@ -256,17 +233,24 @@ It does not reconcile the rest of the running system:
   changes; configuration is deterministic when displays are added/removed;
   docs explain identifiers and fallback behavior.
 
-### [ ] P1-10 — Blur and translucent backgrounds (`Feature`, macOS/config)
+### [x] P1-10 — Blur and translucent backgrounds (`Feature`, macOS/config)
 
-- `bar.blur_radius` is parsed but not applied.
-- Use `NSVisualEffectView` with a rounded mask where possible, or a Core Image
-  blur for custom radii. Define interaction with background opacity and
-  rounded corners.
-- Measure idle and animation cost; keep a no-blur fallback for reduced
-  transparency/high-contrast modes.
-- Acceptance: configured blur renders without clipping artifacts; disabling
-  it restores the current behavior; performance does not regress beyond the
-  P2-05 budget.
+- Implemented `bar.opacity`, `bar.blur_radius`, and per-item
+  `opacity`, `background_blur_radius` and `background_shape`.
+- On macOS 26, blurred surfaces use Apple's `NSGlassEffectView` for real
+  Liquid Glass edge refraction; the tinted interior is inset so the native
+  lensing remains visible. Older releases use `NSVisualEffectView` plus the
+  painted sheen/rim fallback.
+- The renderer splits the bar into backdrop, item-blur and content layers so
+  item vibrancy sits above the bar background and below text/icons.
+- macOS exposes semantic materials rather than exact radii; the configured
+  radius selects an intensity tier (`1–8`, `9–24`, `>24`) on the fallback path.
+- Incremental damage regions and native-glass state caching avoid repainting
+  unchanged items and reapplying unchanged glass properties during spring
+  transitions.
+- Remaining: add an explicit reduced-transparency fallback and test
+  high-contrast mode (tracked under P2-05/P3-04). Formal performance budgets
+  remain under P2-05.
 
 ### [ ] P1-11 — Graph modes and history (`Feature`, core/macOS)
 
@@ -324,6 +308,31 @@ It does not reconcile the rest of the running system:
 - Acceptance: install/update is reproducible from the lockfile; a missing or
   moved ref fails cleanly; tests cover git and local sources.
 
+### [ ] P1-16 — Complete SketchyBar compatibility (`Feature`, CLI/macOS)
+
+- `--add alias` and `--add bracket` are accepted but do not create native
+  menu-bar aliases or grouped bracket items.
+- Popup, shadow, image, background image and native `space` selected-state
+  properties are parsed/ignored rather than rendered.
+- `--add space` creates a custom item only; it cannot observe or switch native
+  Mission Control spaces.
+- Add the missing item types or explicitly reject them with actionable errors;
+  keep unknown properties warning-only for script portability.
+- Acceptance: the documented supported surface matches behavior, unsupported
+  properties are covered by tests, and the parity table is updated.
+
+### [ ] P1-17 — Workspace backends and app-rule ergonomics (`Feature`, examples)
+
+- The bundled workspaces plugin supports yabai and AeroSpace with automatic
+  backend detection.
+- Add a command-template backend for other window managers.
+- yabai app rules are not implemented yet; AeroSpace rules remain the only
+  managed-window path.
+- Offer optional rule grouping (bundle-id prefixes, app categories) while
+  keeping explicit user rules authoritative.
+- Acceptance: a command-template backend passes the headless E2E harness;
+  documentation states polling latency and permission requirements.
+
 ---
 
 ## P2 — Modernization and long-term architecture
@@ -364,8 +373,8 @@ It does not reconcile the rest of the running system:
 
 - Move text measurement, font resolution, screen queries, and image loading
   behind renderer traits so core layout is platform-independent and testable.
-- Introduce frame diffing/damage regions, cache text/shape resources, and
-  separate layout from painting.
+- Frame damage regions are implemented for the macOS content view; caching
+  text/shape resources and separating layout from painting remain.
 - Add headless snapshot/golden tests for bar/items/progress/graphs.
 - Acceptance: core has no AppKit types; a second dummy renderer can render
   the same frame; golden tests catch visual regressions.
@@ -397,7 +406,8 @@ It does not reconcile the rest of the running system:
 ### [ ] P2-07 — Build release and packaging infrastructure (`Chore`, repo)
 
 - Add GitHub Actions for fmt, clippy, tests, example plugin, docs, and
-  `cargo-deny`/`cargo-audit`; cache Cargo artifacts.
+  `cargo-deny`/`cargo-audit`; cache Cargo artifacts. (CI and `cargo-audit` are
+  now in `.github/workflows`; `cargo-deny` and docs-link checks remain.)
 - Produce universal macOS release binaries, checksums, a changelog, and
   signed/notarized artifacts where credentials exist.
 - Add a Homebrew tap/formula, `cargo install` guidance, and a proper uninstall
@@ -486,9 +496,9 @@ It does not reconcile the rest of the running system:
 
 ### [ ] P3-04 — Accessibility and display adaptation (`Feature`, macOS)
 
-- Add VoiceOver labels/roles for items, respect Reduce Motion and Increase
-  Contrast, verify scaling on Retina/non-Retina and external displays, and
-  provide keyboard focus where practical.
+- Add VoiceOver labels/roles for items, respect Reduce Motion, Reduce
+  Transparency and Increase Contrast, verify scaling on Retina/non-Retina and
+  external displays, and provide keyboard focus where practical.
 - Acceptance: VoiceOver can identify item labels and actions; reduced motion
   disables transitions; rendering is crisp at every tested scale.
 
@@ -500,11 +510,13 @@ It does not reconcile the rest of the running system:
 - Acceptance: editors validate keys and types out of the box; the schema is
   versioned with the binary.
 
-### [ ] P3-06 — Repository and community hygiene (`Chore`, repo)
+### [x] P3-06 — Repository and community hygiene (`Chore`, repo)
 
-- Add `CONTRIBUTING.md`, `SECURITY.md`, issue/PR templates, a changelog, and
-  a release checklist. Document the supported macOS versions and known
-  Accessibility/Automation prompts.
+- Added `CONTRIBUTING.md`, `SECURITY.md`, a contributor covenant, issue/PR
+  templates, a changelog, third-party notices, and `docs/RELEASE.md`.
+- Added macOS/Linux CI plus scheduled dependency auditing and Dependabot.
+- Supported versions and the plugin trust model are documented; security
+  reports use GitHub private vulnerability reporting.
 - Acceptance: a new contributor can build, test, and submit a plugin without
   reading source; security reports have a private channel.
 
@@ -519,9 +531,9 @@ It does not reconcile the rest of the running system:
 
 ### [ ] P3-08 — Grow the examples and presets (`Docs`, examples)
 
-- Add a theme showcase, a script-item example, a media/workspace plugin, a
-  multi-display config, and a minimal launchd setup. Validate every example in
-  CI with `fluxbar config validate`.
+- Add a theme showcase, a media plugin, a multi-display config, and a minimal
+  launchd setup. The workspace plugin and script-item examples already exist.
+  Validate every example in CI with `fluxbar config validate`.
 - Acceptance: examples cover every public feature and stay buildable.
 
 ---

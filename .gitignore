@@ -2,3 +2,15 @@
 target/
 .DS_Store
 *.sock
+*.log
+*.pid
+
+# Local environment and machine-specific overrides
+.env
+.env.*
+!.env.example
+*.local.toml
+
+# Editor metadata
+.idea/
+.vscode/

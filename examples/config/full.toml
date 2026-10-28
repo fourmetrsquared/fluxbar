@@ -7,28 +7,44 @@
 #   fluxbar config validate
 #
 # Reload a running daemon with:
-#   fluxbar trigger config_reload
+#   fluxbar config reload
 
 [bar]
-height = 32
+height = 44
 position = "top"
-background = "0xCC1E1E2E"
-corner_radius = 0
-blur_radius = 0
-top_margin = 0
+background = "0x2E0A0A0F"
+opacity = 1.0
+corner_radius = 18
+blur_radius = 22
+# Floating glass capsule: a small gap below the menu bar and side margins.
+top_margin = 6
+horizontal_margin = 12
 full_width = true
 item_spacing = 8
-padding = { top = 0, left = 10, bottom = 0, right = 10 }
+padding = { top = 0, left = 12, bottom = 0, right = 12 }
 font = "SF Pro"
-font_size = 13
+font_size = 14
 foreground = "0xFFFFFFFF"
 
+# Every item inherits this Liquid Glass capsule. background_height = 30 and
+# background_padding.bottom = 7 center it in the 44 pt bar.
 [defaults]
 label_font_size = 13
 icon_font_size = 14
-label_padding = { top = 0, left = 4, bottom = 0, right = 4 }
+label_color = "0xE6FFFFFF"
+icon_color = "0xE6FFFFFF"
+label_padding = { top = 0, left = 5, bottom = 0, right = 5 }
 icon_padding = { top = 0, left = 4, bottom = 0, right = 4 }
-padding = { top = 0, left = 4, bottom = 0, right = 4 }
+padding = { top = 0, left = 9, bottom = 0, right = 9 }
+background = "0x1FFFFFFF"
+background_corner_radius = 13
+background_blur_radius = 14
+background_height = 30
+background_padding = { top = 0, left = 0, bottom = 7, right = 0 }
+# Painted border. On macOS 26 blurred surfaces use the native Liquid Glass rim
+# instead, so this border is only visible on older systems.
+border_color = "0x26FFFFFF"
+border_width = 1
 
 # ---------------------------------------------------------------------------
 # Left group
@@ -38,10 +54,13 @@ padding = { top = 0, left = 4, bottom = 0, right = 4 }
 position = "left"
 icon = "◆"
 label = "FluxBar"
-label_color = "0xFF89B4FA"
-background = "0x33FFFFFF"
-background_corner_radius = 6
-background_padding = { top = 0, left = 6, bottom = 0, right = 6 }
+label_color = "0xFFFFFFFF"
+background = "0x24FFFFFF"
+background_corner_radius = 13
+background_shape = "rounded"
+background_blur_radius = 14
+background_height = 30
+background_padding = { top = 0, left = 0, bottom = 7, right = 0 }
 click_action = { type = "shell", command = "open -a Terminal" }
 
 [items.cpu]
@@ -49,6 +68,10 @@ position = "left"
 kind = "cpu"
 icon = "▦"
 label = "--%"
+progress_color = "0xFF34C759"
+progress_track_color = "0x3334C759"
+progress_height = 3
+progress_position = "bottom"
 click_action = { type = "shell", command = "open -a Activity\\ Monitor" }
 
 [items.memory]
@@ -106,6 +129,15 @@ icon = "◷"
 label = "--:--"
 click_action = { type = "shell", command = "open -a Calendar" }
 
+# Item scripts run on subscribed events and/or every `update_interval` seconds.
+# The script must print a JSON update or call `sketchybar --set`.
+# [items.script_clock]
+# position = "right"
+# label = "--:--"
+# script = "printf '{\"script_clock\":{\"label\":\"%s\"}}\\n' \"$(date +%H:%M)\""
+# update_interval = 30
+# click_script = "open -a Calendar"
+
 # ---------------------------------------------------------------------------
 # Events and timers
 # ---------------------------------------------------------------------------
@@ -128,8 +160,8 @@ description = "Emitted when the user scrolls over the volume item"
 # ---------------------------------------------------------------------------
 
 [animations]
-duration = 220
-easing = "ease_out_expo"
+duration = 480
+easing = "spring"
 disabled = false
 
 # ---------------------------------------------------------------------------
@@ -156,6 +188,58 @@ space_interval = 2
 # subscribe = ["*"]
 # tick_interval = 2
 # auto_restart = true
+
+# Desktop tiles for yabai (native Spaces) or AeroSpace. Install the bundled
+# plugin first:
+#   cargo build --release --manifest-path examples/plugins/workspaces/Cargo.toml
+#   fluxbar plugin install examples/plugins/workspaces --no-build
+# [plugins.workspaces]
+# type = "external"
+# command = "/Users/you/.config/fluxbar/plugins/workspaces/target/release/fluxbar-plugin-workspaces"
+# subscribe = []
+# tick_interval = 1
+# auto_restart = true
+#
+# [plugins.workspaces.config]
+# backend = "auto"          # auto | yabai | aerospace
+# all_monitors = true
+# icon = ""                 # tile text is "<number> <name>"
+# background = "0x1FFFFFFF"
+# selected_background = "0x52FFFFFF"
+# visible_background = "0x2EFFFFFF"
+# foreground = "0xC6FFFFFF"
+# selected_foreground = "0xFFFFFFFF"
+# opacity = 1.0
+# blur_radius = 14
+# corner_radius = 13
+# shape = "rounded"
+# width = 64
+# tile_height = 30
+# padding_left = 4
+# padding_right = 4
+# move_existing = false
+#
+# # Names keyed by workspace name or yabai space label/index. Truncated to 3 chars.
+# [plugins.workspaces.config.names]
+# "1" = "web"
+# "2" = "term"
+#
+# [plugins.workspaces.config.icons]
+# "1" = "W"
+# "2" = "T"
+#
+# [plugins.workspaces.config.tiles."2"]
+# color = "0x663A6EA5"
+# opacity = 0.65
+# blur_radius = 0
+# shape = "rectangle"
+# corner_radius = 0
+# width = 56
+#
+# # AeroSpace only.
+# [plugins.workspaces.config.rules]
+# "com.apple.Safari" = "2"
+# "com.apple.Terminal" = "3"
 
 # ---------------------------------------------------------------------------
 # Modular includes (optional)

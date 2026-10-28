@@ -7,6 +7,7 @@ use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 use fluxbar_core::config::Config;
 use serde_json::{Value, json};
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -85,11 +86,15 @@ pub fn list(socket: &Path, plugins: bool) -> Result<()> {
             println!("no plugins");
             return Ok(());
         }
-        println!("{:<20} {:<8} {:<8} PID", "NAME", "RUNNING", "RESTARTS");
+        println!(
+            "{:<20} {:<10} {:<8} {:<8} PID",
+            "NAME", "STATE", "RUNNING", "RESTARTS"
+        );
         for plugin in plugins {
             println!(
-                "{:<20} {:<8} {:<8} {}",
+                "{:<20} {:<10} {:<8} {:<8} {}",
                 plugin["name"].as_str().unwrap_or("?"),
+                plugin["state"].as_str().unwrap_or("?"),
                 plugin["running"].as_bool().unwrap_or(false),
                 plugin["restarts"].as_u64().unwrap_or(0),
                 plugin["pid"]
@@ -97,6 +102,9 @@ pub fn list(socket: &Path, plugins: bool) -> Result<()> {
                     .map(|pid| pid.to_string())
                     .unwrap_or_else(|| "-".into()),
             );
+            if let Some(error) = plugin["last_error"].as_str() {
+                println!("  last_error: {error}");
+            }
         }
         return Ok(());
     }
@@ -137,7 +145,11 @@ pub fn trigger(socket: &Path, name: &str, payload: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn config(config_path: Option<PathBuf>, command: crate::ConfigCommand) -> Result<()> {
+pub fn config(
+    config_path: Option<PathBuf>,
+    socket: &Path,
+    command: crate::ConfigCommand,
+) -> Result<()> {
     let path = config_path.clone().or_else(Config::default_path);
     match command {
         crate::ConfigCommand::Path => {
@@ -161,7 +173,7 @@ pub fn config(config_path: Option<PathBuf>, command: crate::ConfigCommand) -> Re
                 std::fs::create_dir_all(parent)?;
                 plugin_manager::ensure_layout(parent)?;
             }
-            std::fs::write(&path, default_config::DEFAULT_CONFIG)?;
+            write_private_file(&path, default_config::DEFAULT_CONFIG)?;
             println!("wrote {}", path.display());
             Ok(())
         }
@@ -175,6 +187,20 @@ pub fn config(config_path: Option<PathBuf>, command: crate::ConfigCommand) -> Re
                 config.items.len(),
                 config.plugins.len(),
                 config.events.timers.len()
+            );
+            Ok(())
+        }
+        crate::ConfigCommand::Reload => {
+            let report = client::call(socket, "config.reload", json!({}))?;
+            println!(
+                "reloaded: {} items added, {} updated, {} removed; {} plugins started, {} stopped; {} timers; monitor restarted: {}",
+                report["added_items"].as_u64().unwrap_or(0),
+                report["updated_items"].as_u64().unwrap_or(0),
+                report["removed_items"].as_u64().unwrap_or(0),
+                report["started_plugins"].as_u64().unwrap_or(0),
+                report["stopped_plugins"].as_u64().unwrap_or(0),
+                report["timers"].as_u64().unwrap_or(0),
+                report["monitor_restarted"].as_bool().unwrap_or(false),
             );
             Ok(())
         }
@@ -216,7 +242,7 @@ pub fn plugin(
             if client::call(socket, "config.reload", json!({})).is_ok() {
                 println!("loaded into the running daemon");
             } else {
-                println!("Start FluxBar or run `fluxbar trigger config_reload` to load it.");
+                println!("Start FluxBar or run `fluxbar config reload` to load it.");
             }
             Ok(())
         }
@@ -239,18 +265,56 @@ pub fn plugin(
 }
 
 pub fn paths(config_path: Option<PathBuf>, socket: &Path) -> Result<()> {
+    let config = config_path.or_else(Config::default_path);
+    let config_dir = config
+        .as_deref()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .or_else(Config::default_dir);
+    if let Some(directory) = &config_dir {
+        plugin_manager::set_config_dir(directory.clone());
+    }
+
     println!(
         "config:     {}",
-        config_path
-            .or_else(Config::default_path)
+        config
+            .as_deref()
             .map_or_else(|| "<none>".into(), |p| p.display().to_string())
     );
     println!(
         "config dir: {}",
-        Config::default_dir().map_or_else(|| "<none>".into(), |p| p.display().to_string())
+        config_dir
+            .as_deref()
+            .map_or_else(|| "<none>".into(), |p| p.display().to_string())
     );
     println!("socket:     {}", socket.display());
     println!("plugins:    {}", plugin_manager::plugins_dir()?.display());
+    if let Some(directory) = config_dir {
+        println!("compat:     {}", directory.join("bin").display());
+    }
+    Ok(())
+}
+
+fn write_private_file(path: &Path, contents: &str) -> Result<()> {
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() {
+            std::fs::remove_file(path)?;
+        }
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(contents.as_bytes())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
     Ok(())
 }
 

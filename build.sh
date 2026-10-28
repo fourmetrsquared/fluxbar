@@ -67,12 +67,20 @@ cmd_build() {
     success "All tests passed"
 }
 
+example_manifests() {
+    local manifest
+    for manifest in examples/plugins/*/Cargo.toml; do
+        [[ -f "$manifest" ]] && printf '%s\n' "$manifest"
+    done
+}
+
 build_examples() {
-    if [[ -f examples/plugins/hello/Cargo.toml ]]; then
-        info "Building example plugin…"
-        cargo build --manifest-path examples/plugins/hello/Cargo.toml
-        success "Example plugin builds"
-    fi
+    local manifest
+    while IFS= read -r manifest; do
+        info "Building example plugin: $manifest"
+        cargo build --manifest-path "$manifest"
+        success "Example plugin builds: $manifest"
+    done < <(example_manifests)
 }
 
 cmd_release() {
@@ -118,11 +126,16 @@ cmd_check() {
     ensure_toolchain
     info "Checking formatting…"
     cargo fmt --all -- --check
-    cargo fmt --manifest-path examples/plugins/hello/Cargo.toml -- --check
+    local manifest
+    while IFS= read -r manifest; do
+        cargo fmt --manifest-path "$manifest" -- --check
+    done < <(example_manifests)
     success "Formatting OK"
     info "Running clippy…"
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo clippy --manifest-path examples/plugins/hello/Cargo.toml -- -D warnings
+    while IFS= read -r manifest; do
+        cargo clippy --manifest-path "$manifest" -- -D warnings
+    done < <(example_manifests)
     success "Clippy clean"
     build_examples
     cmd_test
@@ -137,9 +150,10 @@ cmd_clippy() {
 cmd_fmt() {
     ensure_toolchain
     cargo fmt --all
-    if [[ -f examples/plugins/hello/Cargo.toml ]]; then
-        cargo fmt --manifest-path examples/plugins/hello/Cargo.toml
-    fi
+    local manifest
+    while IFS= read -r manifest; do
+        cargo fmt --manifest-path "$manifest"
+    done < <(example_manifests)
     success "Formatted"
 }
 

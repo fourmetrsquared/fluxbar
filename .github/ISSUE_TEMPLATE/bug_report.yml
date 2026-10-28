@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a reproducible problem with FluxBar
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security vulnerabilities, use the private reporting process in
+        [SECURITY.md](https://github.com/fluxbar/fluxbar/blob/HEAD/SECURITY.md)
+        instead of this form.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest config, script, or command sequence that reproduces the issue.
+      placeholder: |
+        1. Start the daemon with ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: FluxBar version
+      description: Output of `fluxbar --version`.
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Output of `sw_vers -productVersion`.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation method
+      options:
+        - Built from source
+        - Release binary
+        - Package manager
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and diagnostics
+      description: Redact tokens, personal paths, and plugin secrets before posting.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed secrets and personal data from the report.
+          required: true

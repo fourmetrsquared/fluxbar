@@ -82,6 +82,10 @@ pub struct Event {
     /// Origin: `"system"`, `"cli"`, plugin name, etc.
     #[serde(default)]
     pub source: String,
+    /// Extra environment variables passed to item scripts (SketchyBar
+    /// `--trigger NAME VAR=value`).
+    #[serde(default)]
+    pub environment: std::collections::BTreeMap<String, String>,
 }
 
 fn now_millis() -> i64 {
@@ -95,6 +99,7 @@ impl Event {
             payload,
             timestamp: now_millis(),
             source: "core".to_string(),
+            environment: std::collections::BTreeMap::new(),
         }
     }
 
@@ -104,6 +109,15 @@ impl Event {
 
     pub fn with_source(mut self, source: impl Into<String>) -> Self {
         self.source = source.into();
+        self
+    }
+
+    /// Attach environment variables for item scripts.
+    pub fn with_environment(
+        mut self,
+        environment: std::collections::BTreeMap<String, String>,
+    ) -> Self {
+        self.environment = environment;
         self
     }
 

@@ -1,0 +1,6 @@
+name = "workspaces"
+build = "cargo build --release"
+entry = "target/release/fluxbar-plugin-workspaces"
+subscribe = []
+tick_interval = 1
+description = "Clickable yabai/AeroSpace desktop tiles with number and short name"
