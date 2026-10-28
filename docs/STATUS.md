@@ -42,6 +42,10 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
   name, switches spaces on click, and moves new AeroSpace windows according to
   explicit app rules. A window manager is required; macOS exposes no public
   Mission Control discovery or switching API.
+- 🟡 A tap-ready Homebrew formula with a `brew services` launchd definition is
+  available in `Formula/fluxbar.rb`; HEAD installs work now. The stable tap,
+  checksum, clean-machine install test, and release signing remain open under
+  P2-07.
 
 ## Security posture
 

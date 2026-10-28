@@ -72,6 +72,49 @@ PID-файл `0600`; второй экземпляр с тем же сокето
 после падения PID-файл будет переиспользован. `SIGINT`, `SIGTERM` и
 `fluxbar stop` завершают таймеры, плагины и UI штатно.
 
+### 1.1.1. Homebrew и автозапуск через `brew services`
+
+Если нужен автозапуск при входе в систему, установите FluxBar через Homebrew.
+Формула находится в `Formula/fluxbar.rb` и содержит описание пользовательского
+LaunchAgent. До публикации первого тега используйте HEAD-установку из этого
+репозитория:
+
+```bash
+brew tap fluxbar/dev https://github.com/fluxbar/fluxbar.git
+brew install --HEAD fluxbar/dev/fluxbar
+brew services start fluxbar
+```
+
+После публикации стабильного tap команды короче:
+
+```bash
+brew tap fluxbar/tap
+brew install fluxbar
+brew services start fluxbar
+```
+
+`brew services start` сразу запускает панель и регистрирует её автозапуск при
+следующем входе. Управление сервисом:
+
+```bash
+brew services list
+brew services restart fluxbar   # после обновления бинарника
+brew services stop fluxbar      # остановить и убрать из автозапуска
+```
+
+В Homebrew 7+ для сторонних tap может потребоваться однократная команда
+`brew trust fluxbar/dev` (или `brew trust fluxbar/tap` для стабильного tap).
+
+Запускайте `brew services` от своего пользователя, без `sudo`: это
+пользовательский LaunchAgent, и панель должна работать в графической сессии
+(`Aqua`), иначе у неё не будет доступа к WindowServer. Конфигурация остаётся в
+`~/.config/fluxbar/fluxbar.toml` и создаётся автоматически при первом запуске.
+Логи сервиса пишутся в `$(brew --prefix)/var/log/fluxbar.log` и
+`$(brew --prefix)/var/log/fluxbar.err.log`. Для остановки управляемого сервиса
+используйте `brew services stop fluxbar`; команда `fluxbar stop` завершает
+процесс, но зарегистрированный сервис снова запустится при следующем входе.
+Чтобы вернуть его раньше, выполните `brew services restart fluxbar`.
+
 ### 1.2. Проверка и перезагрузка
 
 ```bash

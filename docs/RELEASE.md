@@ -15,7 +15,8 @@ targets macOS 12+; Liquid Glass edge deformation is available on macOS 26+.
       and non-Retina displays, with Reduce Motion and Reduce Transparency.
 - [ ] The workspaces plugin was checked with yabai and AeroSpace.
 - [ ] New user-visible behavior is in `CHANGELOG.md` and the Russian guide.
-- [ ] Version numbers in `Cargo.toml`, `Cargo.lock`, and the changelog agree.
+- [ ] Version numbers in `Cargo.toml`, `Cargo.lock`, `Formula/fluxbar.rb`,
+      and the changelog agree.
 - [ ] No local paths, credentials, generated caches, or `target/` directories
       are tracked.
 - [ ] `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`, and
@@ -44,6 +45,20 @@ stat -f '%Sp %N' ~/Library/Caches/dev.fluxbar.fluxbar/fluxbar.pid
 - [ ] A clean profile can run `fluxbar config init` and start without an
       existing configuration.
 - [ ] Generate and verify checksums for published artifacts.
+- [ ] The Homebrew service starts the bar and survives a clean login:
+
+```bash
+brew tap fluxbar/tap
+brew trust fluxbar/tap   # only if Homebrew requires tap trust
+brew install fluxbar
+brew services start fluxbar
+brew services list
+brew services restart fluxbar
+brew services stop fluxbar
+```
+
+- [ ] The service logs are present, the bar is visible, and no duplicate
+      FluxBar process is running after `brew services start`.
 
 ## Publishing
 
@@ -52,7 +67,8 @@ stat -f '%Sp %N' ~/Library/Caches/dev.fluxbar.fluxbar/fluxbar.pid
 - [ ] Attach a universal macOS binary if the build environment and signing
       credentials are available.
 - [ ] If notarization is used, verify the ticket with `spctl --assess`.
-- [ ] Update the Homebrew formula/tap, if one is published.
+- [ ] Add the stable `url` and `sha256` to `Formula/fluxbar.rb`, copy it into
+      the `fluxbar/homebrew-tap` repository, and publish the tap.
 - [ ] Announce the release and link to the security policy for reports.
 
 ## After publishing

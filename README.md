@@ -41,6 +41,44 @@ fluxbar start              # launch the daemon and the bar
 root itself, checks the toolchain version, and prints actionable errors. Run
 `./build.sh help` for all commands.
 
+### Homebrew and login service
+
+The repository contains a Homebrew formula with a launchd service definition,
+so Homebrew users can run FluxBar at login through `brew services`:
+
+```bash
+# Before the first tagged release (HEAD install from this repository):
+brew tap fluxbar/dev https://github.com/fluxbar/fluxbar.git
+brew install --HEAD fluxbar/dev/fluxbar
+brew services start fluxbar
+
+brew services list
+brew services restart fluxbar
+brew services stop fluxbar
+```
+
+Once a tagged release and the `fluxbar/tap` tap are published, the stable form
+is:
+
+```bash
+brew tap fluxbar/tap
+brew install fluxbar
+brew services start fluxbar
+```
+
+On Homebrew versions that require trust for third-party taps, run
+`brew trust fluxbar/dev` once (or `brew trust fluxbar/tap` for the stable tap)
+if Homebrew asks you to.
+
+Run `brew services` as your normal user, not with `sudo`: the service is a
+user LaunchAgent that must run in the graphical login session to display the
+bar. Configuration remains at `~/.config/fluxbar/fluxbar.toml`. Service logs
+are written to `$(brew --prefix)/var/log/fluxbar.log` and
+`$(brew --prefix)/var/log/fluxbar.err.log`. Use `brew services stop fluxbar`
+to stop the managed service; a clean `fluxbar stop` also works, but the
+service is registered to start again at the next login. To resume before the
+next login, use `brew services restart fluxbar`.
+
 ```text
 ./build.sh              Build (debug), build examples, run tests
 ./build.sh release      Optimised build (LTO, stripped)
@@ -207,6 +245,8 @@ manifest format, installation flow, and a dependency-free Python example.
   system monitor and bar visibility.
 - Graceful `SIGINT`/`SIGTERM` shutdown and a locked PID file that prevents
   duplicate daemons.
+- A Homebrew formula with a launchd service definition for
+  `brew services start fluxbar`.
 - Headless mode for CI and IPC tests.
 
 ## Architecture

@@ -8,6 +8,10 @@ semantic versioning once a stable release is published.
 
 ### Added
 
+- A Homebrew formula with a launchd `service` block, so Homebrew users can run
+  FluxBar at login with `brew services start fluxbar`. HEAD installs work
+  before the first tagged release; the stable tap and checksum are added by
+  the release process.
 - `fluxbar config reload`, which reports item/plugin/timer counts and returns
   configuration errors directly instead of requiring the lower-level
   `fluxbar trigger config_reload` event.

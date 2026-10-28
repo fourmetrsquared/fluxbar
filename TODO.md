@@ -411,7 +411,9 @@ covered by unit/integration tests plus the manual checks in
 - Produce universal macOS release binaries, checksums, a changelog, and
   signed/notarized artifacts where credentials exist.
 - Add a Homebrew tap/formula, `cargo install` guidance, and a proper uninstall
-  path.
+  path. A tap-ready formula with a `brew services` launchd definition is now
+  in `Formula/fluxbar.rb`; HEAD installs work before the first tag. The stable
+  URL/checksum, published tap, and clean-machine verification remain.
 - Acceptance: a tagged release builds reproducibly from CI; installation
   instructions are verified on a clean machine; `main` is protected by checks.
 
@@ -420,6 +422,8 @@ covered by unit/integration tests plus the manual checks in
 - Add `fluxbar service install|uninstall|status` using a LaunchAgent plist,
   with log paths, restart policy, and clean removal.
 - Detect an already-running daemon and avoid duplicate agents.
+- Homebrew users can already use the formula's `brew services` definition;
+  this item covers source installs without Homebrew.
 - Acceptance: login starts exactly one daemon; uninstall removes the plist,
   socket, and optional logs; docs cover manual and service modes.
 
