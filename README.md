@@ -161,6 +161,8 @@ and `RUST_LOG`.
   configuration.
 - [docs/PLUGIN_GUIDE.md](docs/PLUGIN_GUIDE.md) — protocol, manifest, SDK,
   sh/bash/Lua plugins, SketchyBar compatibility and workspace setup.
+- [docs/SAFETY.md](docs/SAFETY.md) — unsafe-code invariants and the dependency
+  policy enforced by `cargo-deny` and `cargo-machete`.
 - [examples/config/full.toml](examples/config/full.toml) — a complete working
   configuration.
 - [examples/plugins](examples/plugins) — Rust, Python and workspace plugin
@@ -353,10 +355,11 @@ find ~/.config/fluxbar/plugins.d -type f -exec chmod 600 {} +
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the
 development workflow, review expectations, attribution rules, and the security
-checklist. CI runs formatting, clippy, example builds, tests, and a relative
-Markdown link check; the security workflow runs `cargo audit` for the workspace
-and both example lockfiles. Tagged releases are handled by the release
-workflow. See [docs/RELEASE.md](docs/RELEASE.md) for the release process.
+checklist. CI runs formatting, clippy, example builds, tests, the MSRV check,
+and a relative Markdown link check; the security workflow runs `cargo audit`
+for the workspace and both example lockfiles, plus `cargo-deny` and
+`cargo-machete`. Tagged releases are handled by the release workflow. See
+[docs/RELEASE.md](docs/RELEASE.md) for the release process.
 Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and
 user-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 

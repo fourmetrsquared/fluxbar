@@ -3,6 +3,14 @@
 //! On macOS the crate provides a real AppKit bar window. On other platforms it
 //! falls back to a headless renderer so the workspace keeps building and the
 //! platform-independent parts can be tested everywhere.
+//!
+//! # Safety
+//!
+//! This crate contains the AppKit/Objective-C interop; the rest of the
+//! workspace denies `unsafe_code`. See `docs/SAFETY.md` for the invariants
+//! behind the `msg_send!`, `dlopen`, CoreText and main-thread calls.
+
+#![deny(unsafe_op_in_unsafe_fn)]
 
 #[cfg(target_os = "macos")]
 mod app;

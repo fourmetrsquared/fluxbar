@@ -16,6 +16,10 @@ The first public release is `0.1.0`. Update the version in `Cargo.toml`,
 - [ ] `./build.sh docs` reports no broken relative Markdown links.
 - [ ] `cargo audit`, `cargo audit --file examples/plugins/hello/Cargo.lock`, and
       `cargo audit --file examples/plugins/workspaces/Cargo.lock` pass.
+- [ ] `cargo deny check` and `cargo machete` pass; the example plugin lockfiles
+      are checked with `cargo machete` as well.
+- [ ] The unsafe-code invariants in [SAFETY.md](SAFETY.md) still match the
+      native renderer.
 - [ ] The native bar was manually checked on macOS 12/13, macOS 26, Retina and
       non-Retina displays, with Reduce Motion and Reduce Transparency.
 - [ ] The workspaces plugin was checked with yabai and AeroSpace.

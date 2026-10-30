@@ -8,13 +8,12 @@ license.workspace = true
 description = "Official FluxBar plugin SDK: implement one trait, get a persistent plugin"
 
 [dependencies]
-fluxbar-core = { path = "../fluxbar-core" }
+fluxbar-core = { version = "0.1.0", path = "../fluxbar-core" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "macros", "test-util"] }

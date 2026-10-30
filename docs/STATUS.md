@@ -66,8 +66,10 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
   names are rejected. New config/plugin directories use `0700` and new
   registration/config files use `0600`.
 - ✅ Dependency audit (`cargo audit`) is clean for the workspace and both example
-  lockfiles. Private reporting and a release checklist are documented in
-  `SECURITY.md` and `docs/RELEASE.md`.
+  lockfiles. `cargo-deny` enforces the license/source policy and
+  `cargo-machete` checks for unused dependencies. Private reporting and a
+  release checklist are documented in `SECURITY.md` and `docs/RELEASE.md`;
+  unsafe-code invariants are in `docs/SAFETY.md`.
 - 🟡 Plugins, build commands, scripts, and click actions are arbitrary code
   running as the logged-in user; there is no sandbox. Install only trusted
   plugins and review build commands.
@@ -88,6 +90,8 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ clean |
 | `cargo fmt --all -- --check` | ✅ clean |
 | Rust 1.89 MSRV check | ✅ CI job |
+| `cargo deny check` / `cargo machete` | ✅ CI security job |
+| Unsafe-code policy | ✅ only `fluxbar-macos`; documented in [SAFETY.md](SAFETY.md) |
 | Unit tests for config parsing and IPC routing | ✅ (config includes/merging/timers/mouse actions, JSON-RPC roundtrip, handler routing, plugin protocol/backoff, layout/animations) |
 | Docs updated | ✅ README, configuration reference, plugin guide, status, examples, Russian end-to-end guide |
 

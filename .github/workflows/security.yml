@@ -32,3 +32,25 @@ jobs:
         run: |
           cargo audit --file examples/plugins/hello/Cargo.lock
           cargo audit --file examples/plugins/workspaces/Cargo.lock
+
+  policy:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check licenses, sources, bans, and advisories
+        uses: EmbarkStudios/cargo-deny-action@v2
+
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@cargo-machete
+
+      - name: Check for unused dependencies
+        run: |
+          cargo machete
+          cargo machete examples/plugins/hello/Cargo.toml examples/plugins/workspaces/Cargo.toml

@@ -12,9 +12,8 @@ name = "fluxbar"
 path = "src/main.rs"
 
 [dependencies]
-fluxbar-core = { path = "../fluxbar-core" }
-fluxbar-macos = { path = "../fluxbar-macos" }
-fluxbar-sdk = { path = "../fluxbar-sdk" }
+fluxbar-core = { version = "0.1.0", path = "../fluxbar-core" }
+fluxbar-macos = { version = "0.1.0", path = "../fluxbar-macos" }
 
 tokio.workspace = true
 clap.workspace = true
@@ -25,10 +24,7 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
-thiserror.workspace = true
-directories.workspace = true
 fs2.workspace = true
-chrono.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

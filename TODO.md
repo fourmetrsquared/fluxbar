@@ -439,15 +439,21 @@ covered by unit/integration tests plus the manual checks in
   breaking protocol changes require a major SDK version; docs links are
   checked in CI.
 
-### [ ] P2-10 — Dependency, MSRV, and unsafe-code policy (`Chore`, repo)
+### [x] P2-10 — Dependency, MSRV, and unsafe-code policy (`Chore`, repo)
 
-- The MSRV is documented as Rust 1.89/edition 2024 and enforced by a dedicated
-  CI job. Add `cargo-deny` for licenses/advisories and `cargo-machete` for
-  unused dependencies.
-- Audit the `objc2` unsafe blocks, document their invariants, and add
-  `#[deny(unsafe_op_in_unsafe_fn)]` where practical.
-- Acceptance: CI fails on advisories/license violations/MSRV regression;
-  unsafe code has a short written safety argument.
+- The MSRV is Rust 1.89/edition 2024 and is enforced by a dedicated CI job.
+  `deny.toml` configures `cargo-deny` for advisories, licenses, bans, and
+  sources; the security workflow also runs `cargo-machete` for the workspace
+  and example plugins.
+- The unused direct dependencies found by `cargo-machete` were removed, and
+  path dependencies now carry explicit versions instead of wildcard
+  requirements.
+- Unsafe code is confined to the AppKit/CoreText boundary in
+  `fluxbar-macos`; the platform-independent crates deny `unsafe_code`, and
+  `unsafe_op_in_unsafe_fn` is denied workspace-wide. Invariants are documented
+  in [docs/SAFETY.md](docs/SAFETY.md) and at each call site.
+- Acceptance met: CI fails on advisories/license violations/MSRV regressions,
+  wildcard sources, and unused dependencies.
 
 ### [ ] P2-11 — Cross-platform renderer backends (NFR-4) (`Feature`, platform)
 

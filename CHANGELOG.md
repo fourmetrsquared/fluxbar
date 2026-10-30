@@ -25,8 +25,7 @@ yabai/AeroSpace workspaces example.
 - `scripts/release.sh` and `./build.sh dist`, which build the same universal
   release artifacts locally, plus `./build.sh docs` for Markdown link checks
   and `./build.sh uninstall --yes` for source installations.
-- A documented Rust 1.89 MSRV with a dedicated CI check, matching the
-  dependency tree (`uuid` 1.29 requires Rust 1.89).
+- A documented Rust 1.89 MSRV with a dedicated CI check.
 - `fluxbar config reload`, which reports item/plugin/timer counts and returns
   configuration errors directly instead of requiring the lower-level
   `fluxbar trigger config_reload` event.
@@ -53,8 +52,11 @@ yabai/AeroSpace workspaces example.
   path components.
 - Added private permissions for newly created configuration directories and
   files.
-- Added dependency auditing with `cargo audit` and a private vulnerability
-  reporting policy.
+- Added dependency auditing with `cargo audit`, a `cargo-deny` license/source
+  policy, and `cargo-machete` unused-dependency checks, plus a private
+  vulnerability reporting policy.
+- Removed unused direct dependencies and added explicit versions to workspace
+  path dependencies; documented the unsafe-code boundary in `docs/SAFETY.md`.
 - Added a locked PID file and graceful signal handling to prevent duplicate
   daemons and abrupt plugin/socket teardown.
 

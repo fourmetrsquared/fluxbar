@@ -3,6 +3,15 @@
 //! The bar is a borderless, non-activating window pinned to the top (or
 //! bottom) of the main screen. A custom `NSView` paints the frame produced by
 //! `fluxbar-core` and forwards mouse events back to the daemon.
+//!
+//! # Safety
+//!
+//! Every `msg_send!` uses a selector and argument types from the public
+//! AppKit contract. Views and windows are `MainThreadOnly` and are created,
+//! mutated, and released on the UI thread. `Retained<T>` owns the Objective-C
+//! reference; raw pointers returned by `alloc`/`init` are converted exactly
+//! once. Dynamic `NSGlassEffectView` calls are guarded by an `AnyClass::get`
+//! lookup and only run for views created by `native_glass_view`.
 
 #![allow(unsafe_code)]
 
@@ -159,6 +168,8 @@ impl BarView {
             truncating_style,
         };
         let this = mtm.alloc::<Self>().set_ivars(ivars);
+        // SAFETY: `NSView`'s designated initializer on a main-thread allocation
+        // with the ivars already installed; the returned object is retained.
         let view: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame] };
         view.setAutoresizesSubviews(true);
         view

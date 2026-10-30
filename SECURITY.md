@@ -73,10 +73,11 @@ The current code includes:
 - a locked, owner-only PID file next to the socket, with stale-file recovery;
 - graceful `SIGINT`/`SIGTERM` shutdown;
 - private permissions for new configuration directories and files;
-- dependency auditing in CI with `cargo audit`;
+- dependency auditing in CI with `cargo audit`, `cargo-deny`, and
+  `cargo-machete`;
 - no `unsafe` code in the platform-independent crates. The native macOS
   renderer contains the AppKit/Objective-C interop, documented at each call
-  site.
+  site and in [docs/SAFETY.md](docs/SAFETY.md).
 
 ## Dependency audits
 
@@ -86,6 +87,8 @@ Run the same checks locally:
 cargo audit
 cargo audit --file examples/plugins/hello/Cargo.lock
 cargo audit --file examples/plugins/workspaces/Cargo.lock
+cargo deny check
+cargo machete
 ```
 
 If an advisory affects an indirect dependency, update `Cargo.lock` or open an

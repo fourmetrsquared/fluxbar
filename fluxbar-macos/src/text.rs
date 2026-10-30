@@ -3,6 +3,14 @@
 //! Layout runs on the daemon thread, so it cannot call `NSStringDrawing`
 //! directly. CoreText gives the same typographic metrics as AppKit while
 //! remaining safe to use off the main thread.
+//!
+//! # Safety
+//!
+//! The attribute dictionaries contain only documented AppKit keys and object
+//! values. `CFAttributedString` borrows a live `NSAttributedString`, and the
+//! resulting `CTLine` is owned by `Retained` for the duration of the call.
+//! Null `CGRect`/`CGFloat` output pointers ask CoreText to skip optional
+//! metrics; the returned typographic width is still a valid `f64`.
 
 #![allow(unsafe_code)]
 

@@ -69,7 +69,11 @@ the native renderer need extra review. Please include:
 - the trust boundary being changed,
 - what happens with malformed or hostile input,
 - tests for limits and failure paths,
-- the output of `cargo audit` when dependencies changed.
+- the output of `cargo audit`, `cargo deny check`, and `cargo machete` when
+  dependencies changed.
+
+Unsafe code belongs only in `fluxbar-macos`; document the invariant in a
+`SAFETY` comment and update [docs/SAFETY.md](docs/SAFETY.md).
 
 Read [SECURITY.md](SECURITY.md) for the threat model and reporting process.
 
