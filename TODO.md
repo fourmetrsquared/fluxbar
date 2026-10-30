@@ -407,10 +407,10 @@ the renderer unit tests plus the manual checks in
 ### [ ] P2-07 — Build release and packaging infrastructure (`Chore`, repo)
 
 - GitHub Actions now cover fmt, clippy, tests, example plugins, Markdown link
-  checks, `cargo-audit`, and Cargo caching. A tag-triggered release workflow
-  builds universal macOS binaries, checksums, release notes, and a stable
-  Homebrew formula; Developer ID signing and tap publication run when the
-  corresponding secrets are configured. `cargo-deny` remains open.
+  checks, `cargo-audit`, `cargo-deny`, `cargo-machete`, and Cargo caching. A
+  tag-triggered release workflow builds universal macOS binaries, checksums,
+  release notes, and a stable Homebrew formula; Developer ID signing and tap
+  publication run when the corresponding secrets are configured.
 - A tap-ready HEAD formula with a `brew services` launchd definition is in
   `Formula/fluxbar.rb`. `./build.sh dist` builds the same universal artifacts
   locally, and `./build.sh uninstall --yes` removes a source install without
