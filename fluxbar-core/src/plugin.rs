@@ -464,11 +464,9 @@ impl PluginHost {
                     (Some(_), None) => true,
                     _ => false,
                 };
-                if should_stop {
-                    if let Some(plugin) = plugins.remove(&name) {
-                        plugin.request_stop();
-                        stopped += 1;
-                    }
+                if should_stop && let Some(plugin) = plugins.remove(&name) {
+                    plugin.request_stop();
+                    stopped += 1;
                 }
             }
         }
@@ -897,10 +895,10 @@ async fn run_plugin(
                         if let Some(log) = result.log {
                             info!(plugin = %name, "{log}");
                         }
-                        if !result.updates.is_empty() {
-                            if let Err(error) = state.apply_plugin_updates(&result.updates) {
-                                warn!(plugin = %name, %error, "failed to apply plugin updates");
-                            }
+                        if !result.updates.is_empty()
+                            && let Err(error) = state.apply_plugin_updates(&result.updates)
+                        {
+                            warn!(plugin = %name, %error, "failed to apply plugin updates");
                         }
                         for emitted in result.events {
                             state.emit(

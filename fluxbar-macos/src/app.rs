@@ -831,14 +831,14 @@ fn paint_item(
         }
 
         // Border.
-        if let Some(border) = item.style.border_color {
-            if item.style.border_width > 0.0 {
-                let color = ns_color(border);
-                let path = item_background_path(item, padded);
-                path.setLineWidth(item.style.border_width);
-                color.setStroke();
-                path.stroke();
-            }
+        if let Some(border) = item.style.border_color
+            && item.style.border_width > 0.0
+        {
+            let color = ns_color(border);
+            let path = item_background_path(item, padded);
+            path.setLineWidth(item.style.border_width);
+            color.setStroke();
+            path.stroke();
         }
 
         // Draw the glass rim after the optional flat border so the edge stays
@@ -857,15 +857,15 @@ fn paint_item(
 
     // Progress is painted before the graph and text. Bottom/top strips reserve
     // space through `content_rect`; background fills sit behind the content.
-    if let Some(progress) = item.progress {
-        if let Some(progress_rect) = progress_strip_rect(item, rect) {
-            paint_progress(
-                progress,
-                progress_rect,
-                item.style.progress_color,
-                item.style.progress_track_color,
-            );
-        }
+    if let Some(progress) = item.progress
+        && let Some(progress_rect) = progress_strip_rect(item, rect)
+    {
+        paint_progress(
+            progress,
+            progress_rect,
+            item.style.progress_color,
+            item.style.progress_track_color,
+        );
     }
 
     // Graph.

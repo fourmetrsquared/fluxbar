@@ -206,10 +206,8 @@ pub fn subscribe<H: EventHandler + 'static>(
                     let kinds = handler.event_kinds();
                     let matches = kinds.is_empty()
                         || kinds.iter().any(|kind| kind == "*" || kind == event.name());
-                    if matches {
-                        if let Err(error) = handler.handle(event).await {
-                            tracing::error!(%error, "event handler failed");
-                        }
+                    if matches && let Err(error) = handler.handle(event).await {
+                        tracing::error!(%error, "event handler failed");
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {

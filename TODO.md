@@ -405,15 +405,17 @@ covered by unit/integration tests plus the manual checks in
 
 ### [ ] P2-07 — Build release and packaging infrastructure (`Chore`, repo)
 
-- Add GitHub Actions for fmt, clippy, tests, example plugin, docs, and
-  `cargo-deny`/`cargo-audit`; cache Cargo artifacts. (CI and `cargo-audit` are
-  now in `.github/workflows`; `cargo-deny` and docs-link checks remain.)
-- Produce universal macOS release binaries, checksums, a changelog, and
-  signed/notarized artifacts where credentials exist.
-- Add a Homebrew tap/formula, `cargo install` guidance, and a proper uninstall
-  path. A tap-ready formula with a `brew services` launchd definition is now
-  in `Formula/fluxbar.rb`; HEAD installs work before the first tag. The stable
-  URL/checksum, published tap, and clean-machine verification remain.
+- GitHub Actions now cover fmt, clippy, tests, example plugins, Markdown link
+  checks, `cargo-audit`, and Cargo caching. A tag-triggered release workflow
+  builds universal macOS binaries, checksums, release notes, and a stable
+  Homebrew formula; Developer ID signing and tap publication run when the
+  corresponding secrets are configured. `cargo-deny` remains open.
+- A tap-ready HEAD formula with a `brew services` launchd definition is in
+  `Formula/fluxbar.rb`. `./build.sh dist` builds the same universal artifacts
+  locally, and `./build.sh uninstall --yes` removes a source install without
+  touching configuration or caches.
+- Remaining: publish the `fluxbar/tap` tap, verify a clean-machine install and
+  login service, and protect `main` with branch protection checks.
 - Acceptance: a tagged release builds reproducibly from CI; installation
   instructions are verified on a clean machine; `main` is protected by checks.
 
@@ -439,9 +441,9 @@ covered by unit/integration tests plus the manual checks in
 
 ### [ ] P2-10 — Dependency, MSRV, and unsafe-code policy (`Chore`, repo)
 
-- Document the MSRV (currently Rust 1.85/edition 2024), enforce it in CI, and
-  add `cargo-deny` for licenses/advisories and `cargo-machete` for unused
-  dependencies.
+- The MSRV is documented as Rust 1.89/edition 2024 and enforced by a dedicated
+  CI job. Add `cargo-deny` for licenses/advisories and `cargo-machete` for
+  unused dependencies.
 - Audit the `objc2` unsafe blocks, document their invariants, and add
   `#[deny(unsafe_op_in_unsafe_fn)]` where practical.
 - Acceptance: CI fails on advisories/license violations/MSRV regression;

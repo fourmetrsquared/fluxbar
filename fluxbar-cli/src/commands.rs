@@ -296,10 +296,10 @@ pub fn paths(config_path: Option<PathBuf>, socket: &Path) -> Result<()> {
 }
 
 fn write_private_file(path: &Path, contents: &str) -> Result<()> {
-    if let Ok(metadata) = std::fs::symlink_metadata(path) {
-        if metadata.file_type().is_symlink() {
-            std::fs::remove_file(path)?;
-        }
+    if let Ok(metadata) = std::fs::symlink_metadata(path)
+        && metadata.file_type().is_symlink()
+    {
+        std::fs::remove_file(path)?;
     }
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);

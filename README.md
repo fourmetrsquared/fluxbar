@@ -22,7 +22,7 @@ rebuild and a plugin restart.
 
 ## Quick start
 
-Requirements: macOS 12+, Rust 1.85+ (install via [rustup](https://rustup.rs)).
+Requirements: macOS 12+, Rust 1.89+ (install via [rustup](https://rustup.rs)).
 Native Liquid Glass edge deformation requires macOS 26; earlier releases use
 the built-in painted glass fallback. The `rust-toolchain.toml` pins stable and
 enables `rustfmt` + `clippy`.
@@ -77,18 +77,42 @@ are written to `$(brew --prefix)/var/log/fluxbar.log` and
 `$(brew --prefix)/var/log/fluxbar.err.log`. Use `brew services stop fluxbar`
 to stop the managed service; a clean `fluxbar stop` also works, but the
 service is registered to start again at the next login. To resume before the
-next login, use `brew services restart fluxbar`.
+next login, use `brew services restart fluxbar`. Remove a Homebrew install with
+`brew uninstall fluxbar`; remove a source install with
+`./build.sh uninstall --yes` (configuration and caches are kept).
 
 ```text
 ./build.sh              Build (debug), build examples, run tests
 ./build.sh release      Optimised build (LTO, stripped)
 ./build.sh install      Release build + install to ~/.local/bin
+./build.sh uninstall    Remove the source-installed binary (--yes required)
+./build.sh dist         Universal release artifacts + SHA256SUMS
+./build.sh docs         Check relative links in Markdown files
 ./build.sh run start    Build and run the daemon
 ./build.sh test         Run the test suite
 ./build.sh check        fmt --check + clippy -D warnings + tests
 ./build.sh examples     Build the example plugins
 ./build.sh doctor       Print environment diagnostics
 ```
+
+### Release artifacts
+
+A tagged `v*` release runs the GitHub Actions workflow in
+[.github/workflows/release.yml](.github/workflows/release.yml), which builds a
+universal Apple Silicon + Intel archive, publishes `SHA256SUMS`, release notes,
+and a stable Homebrew formula. Developer ID signing and Homebrew tap updates
+are enabled when the release secrets are configured.
+
+The same artifacts can be built locally:
+
+```bash
+./scripts/release.sh          # or: ./build.sh dist
+cd target/dist/assets
+shasum -a 256 -c SHA256SUMS
+```
+
+See [docs/RELEASE.md](docs/RELEASE.md) for the tag, signing, Homebrew tap, and
+clean-machine verification steps.
 
 ## CLI
 
@@ -329,9 +353,10 @@ find ~/.config/fluxbar/plugins.d -type f -exec chmod 600 {} +
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the
 development workflow, review expectations, attribution rules, and the security
-checklist. CI runs formatting, clippy, example builds, and tests; the security
-workflow runs `cargo audit` for the workspace and both example lockfiles. See
-[docs/RELEASE.md](docs/RELEASE.md) for the release process.
+checklist. CI runs formatting, clippy, example builds, tests, and a relative
+Markdown link check; the security workflow runs `cargo audit` for the workspace
+and both example lockfiles. Tagged releases are handled by the release
+workflow. See [docs/RELEASE.md](docs/RELEASE.md) for the release process.
 Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and
 user-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 

@@ -1,32 +1,58 @@
 # Release checklist
 
-Use this checklist for a tagged FluxBar release. The repository currently
-targets macOS 12+; Liquid Glass edge deformation is available on macOS 26+.
+Use this checklist for a tagged FluxBar release. The repository targets
+macOS 12+; Liquid Glass edge deformation and `NSGlassEffectView` are available
+on macOS 26+.
+
+The first public release is `0.1.0`. Update the version in `Cargo.toml`,
+`Cargo.lock`, `Formula/fluxbar.rb`, and `CHANGELOG.md` together before tagging.
 
 ## Before tagging
 
 - [ ] The default branch is green on macOS and Linux CI, including the example
       plugins.
-- [ ] `cargo fmt --all -- --check` and
-      `cargo clippy --workspace --all-targets -- -D warnings` pass.
+- [ ] The MSRV job passes with Rust 1.89.
 - [ ] `./build.sh check` passes on a clean checkout.
-- [ ] `cargo audit` and both example lockfile audits pass.
-- [ ] The native bar was manually checked on macOS 12/13, macOS 26, Retina
-      and non-Retina displays, with Reduce Motion and Reduce Transparency.
+- [ ] `./build.sh docs` reports no broken relative Markdown links.
+- [ ] `cargo audit`, `cargo audit --file examples/plugins/hello/Cargo.lock`, and
+      `cargo audit --file examples/plugins/workspaces/Cargo.lock` pass.
+- [ ] The native bar was manually checked on macOS 12/13, macOS 26, Retina and
+      non-Retina displays, with Reduce Motion and Reduce Transparency.
 - [ ] The workspaces plugin was checked with yabai and AeroSpace.
 - [ ] New user-visible behavior is in `CHANGELOG.md` and the Russian guide.
-- [ ] Version numbers in `Cargo.toml`, `Cargo.lock`, `Formula/fluxbar.rb`,
-      and the changelog agree.
+- [ ] Version numbers in `Cargo.toml`, `Cargo.lock`, `Formula/fluxbar.rb`, and
+      the changelog agree.
 - [ ] No local paths, credentials, generated caches, or `target/` directories
       are tracked.
 - [ ] `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`, and
       `THIRD_PARTY_NOTICES.md` are present and current.
 
-## Build
+## Local release build
 
 ```bash
-./build.sh release
-./target/release/fluxbar --version
+./build.sh check
+./build.sh docs
+./scripts/release.sh
+tar -tzf target/dist/assets/fluxbar-0.1.0-macos-universal.tar.gz
+```
+
+`scripts/release.sh` (also available as `./build.sh dist`) builds both
+`x86_64-apple-darwin` and `aarch64-apple-darwin` with
+`MACOSX_DEPLOYMENT_TARGET=12.0`, combines them with `lipo`, verifies
+`fluxbar --version`, packages the binary with the license and user docs, and
+writes these assets under `target/dist/assets/`:
+
+- `fluxbar-<version>-macos-universal.tar.gz`
+- `SHA256SUMS`
+- `RELEASE_NOTES.md` (extracted from the matching changelog section)
+- `fluxbar.rb` (stable Homebrew formula for the tap)
+
+Verify the archive before publishing:
+
+```bash
+cd target/dist/assets
+shasum -a 256 -c SHA256SUMS
+tar -tzf fluxbar-0.1.0-macos-universal.tar.gz
 ```
 
 - [ ] The binary starts, shows the bar, and reports the expected version.
@@ -44,12 +70,86 @@ stat -f '%Sp %N' ~/Library/Caches/dev.fluxbar.fluxbar/fluxbar.pid
 
 - [ ] A clean profile can run `fluxbar config init` and start without an
       existing configuration.
-- [ ] Generate and verify checksums for published artifacts.
-- [ ] The Homebrew service starts the bar and survives a clean login:
+
+## Signing
+
+Developer ID signing is optional but recommended. Export the certificate as a
+password-protected `.p12`, base64-encode it, and configure these repository
+secrets for the release workflow:
+
+| Secret | Description |
+| --- | --- |
+| `APPLE_CERTIFICATE_P12` | Base64-encoded Developer ID Application certificate (`.p12`). |
+| `APPLE_CERTIFICATE_PASSWORD` | Password for the `.p12` file. May be empty. |
+| `APPLE_KEYCHAIN_PASSWORD` | Temporary CI keychain password. |
+| `APPLE_SIGNING_IDENTITY` | Full identity, for example `Developer ID Application: Example (TEAMID)`. |
+
+The workflow imports the certificate into a temporary keychain and signs the
+universal binary with `codesign --options runtime --timestamp`. It removes the
+keychain afterwards. Without these secrets the release is built unsigned and
+the workflow prints that fact.
+
+For a local signed build:
+
+```bash
+FLUXBAR_CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
+  ./scripts/release.sh
+```
+
+The script verifies the signature with `codesign --verify --strict` before
+packaging.
+
+Notarization is not automated for the bare command-line binary. Homebrew
+installs are not quarantined; if you also distribute a browser-downloaded
+`.pkg`, `.dmg`, or app bundle, sign and notarize that container separately.
+
+## Publishing
+
+```bash
+git status --short             # must be clean
+git tag -s v0.1.0 -m "FluxBar 0.1.0"
+git push origin master
+git push origin v0.1.0
+```
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`:
+
+1. audits the workspace lockfile;
+2. runs `./build.sh check` and the Markdown link check on macOS;
+3. builds and optionally signs the universal release artifacts;
+4. publishes the GitHub release with the tarball, checksums, notes, and stable
+   Homebrew formula;
+5. if `HOMEBREW_TAP_TOKEN` is configured, commits the generated formula to the
+   tap repository configured by the `HOMEBREW_TAP_REPOSITORY` repository
+   variable (default `fluxbar/homebrew-tap`).
+
+The workflow can also be started manually from the Actions tab with an
+existing tag. Re-running it uploads the current assets to the existing release
+with `--clobber`.
+
+### Homebrew tap
+
+`Formula/fluxbar.rb` in this repository is the development/HEAD formula. The
+stable formula is generated at release time from
+`packaging/homebrew/fluxbar.rb.template` and points to the universal archive,
+so its `sha256` always matches the published asset.
+
+If the tap token is not configured, copy the generated formula manually:
+
+```bash
+cp target/dist/assets/fluxbar.rb ../homebrew-tap/Formula/fluxbar.rb
+cd ../homebrew-tap
+git add Formula/fluxbar.rb
+git commit -m "fluxbar 0.1.0"
+git push
+```
+
+Then verify the managed service from a clean user account:
 
 ```bash
 brew tap fluxbar/tap
 brew trust fluxbar/tap   # only if Homebrew requires tap trust
+brew audit --strict --formula fluxbar
 brew install fluxbar
 brew services start fluxbar
 brew services list
@@ -59,20 +159,15 @@ brew services stop fluxbar
 
 - [ ] The service logs are present, the bar is visible, and no duplicate
       FluxBar process is running after `brew services start`.
-
-## Publishing
-
-- [ ] Create a signed tag (`git tag -s vX.Y.Z`).
-- [ ] Publish a GitHub release with the changelog and checksums.
-- [ ] Attach a universal macOS binary if the build environment and signing
-      credentials are available.
-- [ ] If notarization is used, verify the ticket with `spctl --assess`.
-- [ ] Add the stable `url` and `sha256` to `Formula/fluxbar.rb`, copy it into
-      the `fluxbar/homebrew-tap` repository, and publish the tap.
-- [ ] Announce the release and link to the security policy for reports.
+- [ ] The service starts exactly one bar after a clean login.
+- [ ] `brew uninstall fluxbar` removes the binary; `brew services stop` leaves
+      the user configuration and caches untouched.
 
 ## After publishing
 
 - [ ] Verify the release artifact from a clean machine or VM.
+- [ ] Verify the generated `fluxbar.rb` checksum against the release asset.
 - [ ] Keep the previous release available for rollback.
 - [ ] Triage new dependency advisories in the next scheduled audit.
+- [ ] Update `CHANGELOG.md` with a new `[Unreleased]` section before the next
+      release.

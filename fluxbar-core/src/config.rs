@@ -859,12 +859,12 @@ pub(crate) fn validate_item(name: &str, item: &ItemConfig) -> Result<()> {
             "item `{name}` background_corner_radius must be >= 0"
         )));
     }
-    if let Some(height) = item.progress_height {
-        if !height.is_finite() || height < 0.0 || height > 64.0 {
-            return Err(FluxError::Config(format!(
-                "item `{name}` progress_height must be between 0 and 64"
-            )));
-        }
+    if let Some(height) = item.progress_height
+        && (!height.is_finite() || height < 0.0 || height > 64.0)
+    {
+        return Err(FluxError::Config(format!(
+            "item `{name}` progress_height must be between 0 and 64"
+        )));
     }
     Ok(())
 }

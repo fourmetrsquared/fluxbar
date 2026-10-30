@@ -7,7 +7,7 @@ keeps the core, CLI, and plugin SDK buildable on other Unix-like systems.
 
 Requirements:
 
-- Rust 1.85 or newer (`rust-toolchain.toml` pins a stable toolchain)
+- Rust 1.89 or newer (`rust-toolchain.toml` pins a stable toolchain)
 - macOS 12+ for the native bar
 - yabai or AeroSpace only if you are working on the workspaces example
 

@@ -43,9 +43,11 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
   explicit app rules. A window manager is required; macOS exposes no public
   Mission Control discovery or switching API.
 - 🟡 A tap-ready Homebrew formula with a `brew services` launchd definition is
-  available in `Formula/fluxbar.rb`; HEAD installs work now. The stable tap,
-  checksum, clean-machine install test, and release signing remain open under
-  P2-07.
+  available in `Formula/fluxbar.rb`; HEAD installs work now. The tag-triggered
+  release workflow builds a universal binary, `SHA256SUMS`, release notes, and
+  a stable binary formula from `packaging/homebrew/fluxbar.rb.template`, with
+  optional Developer ID signing and automatic tap publication. Publishing the
+  tap and clean-machine install verification remain open under P2-07.
 
 ## Security posture
 
@@ -85,6 +87,7 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
 | --- | --- |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ clean |
 | `cargo fmt --all -- --check` | ✅ clean |
+| Rust 1.89 MSRV check | ✅ CI job |
 | Unit tests for config parsing and IPC routing | ✅ (config includes/merging/timers/mouse actions, JSON-RPC roundtrip, handler routing, plugin protocol/backoff, layout/animations) |
 | Docs updated | ✅ README, configuration reference, plugin guide, status, examples, Russian end-to-end guide |
 

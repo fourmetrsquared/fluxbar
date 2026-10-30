@@ -242,10 +242,10 @@ impl Drop for IpcServer {
 }
 
 fn remove_socket_file(path: &Path) {
-    if let Ok(meta) = std::fs::symlink_metadata(path) {
-        if meta.file_type().is_socket() {
-            let _ = std::fs::remove_file(path);
-        }
+    if let Ok(meta) = std::fs::symlink_metadata(path)
+        && meta.file_type().is_socket()
+    {
+        let _ = std::fs::remove_file(path);
     }
 }
 

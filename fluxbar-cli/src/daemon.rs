@@ -47,10 +47,10 @@ impl PidFile {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        if let Ok(metadata) = fs::symlink_metadata(path) {
-            if metadata.file_type().is_symlink() {
-                anyhow::bail!("refusing to use symlinked PID file {}", path.display());
-            }
+        if let Ok(metadata) = fs::symlink_metadata(path)
+            && metadata.file_type().is_symlink()
+        {
+            anyhow::bail!("refusing to use symlinked PID file {}", path.display());
         }
 
         let mut file = fs::OpenOptions::new()
@@ -237,10 +237,10 @@ fn bootstrap_default_layout(config_path: &Path) -> Result<()> {
             use std::os::unix::fs::PermissionsExt;
             // Existing installs may predate the private-config policy. Only
             // change a regular file; a user-managed symlink is left alone.
-            if let Ok(metadata) = fs::symlink_metadata(config_path) {
-                if metadata.file_type().is_file() {
-                    fs::set_permissions(config_path, fs::Permissions::from_mode(0o600))?;
-                }
+            if let Ok(metadata) = fs::symlink_metadata(config_path)
+                && metadata.file_type().is_file()
+            {
+                fs::set_permissions(config_path, fs::Permissions::from_mode(0o600))?;
             }
         }
         return Ok(());

@@ -488,10 +488,10 @@ pub fn ensure_shims(config_dir: &Path) -> Result<PathBuf> {
 fn write_shim(path: &Path, contents: String) -> Result<()> {
     // A symlink in the user's config directory must not redirect the shim
     // write to an unrelated file.
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if metadata.file_type().is_symlink() {
-            fs::remove_file(path)?;
-        }
+    if let Ok(metadata) = fs::symlink_metadata(path)
+        && metadata.file_type().is_symlink()
+    {
+        fs::remove_file(path)?;
     }
     fs::write(path, contents)?;
     #[cfg(unix)]

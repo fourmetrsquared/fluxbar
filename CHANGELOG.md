@@ -6,12 +6,27 @@ semantic versioning once a stable release is published.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-30
+
+Initial public release: native macOS bar, JSON-RPC IPC, configurable items,
+events and timers, plugin SDK/host, SketchyBar compatibility layer, and the
+yabai/AeroSpace workspaces example.
+
 ### Added
 
 - A Homebrew formula with a launchd `service` block, so Homebrew users can run
   FluxBar at login with `brew services start fluxbar`. HEAD installs work
   before the first tagged release; the stable tap and checksum are added by
   the release process.
+- A tag-triggered release workflow that verifies the source, builds a
+  universal macOS binary, publishes checksums and release notes, and renders
+  a stable Homebrew formula. Developer ID signing and Homebrew tap updates are
+  enabled when the corresponding repository secrets are configured.
+- `scripts/release.sh` and `./build.sh dist`, which build the same universal
+  release artifacts locally, plus `./build.sh docs` for Markdown link checks
+  and `./build.sh uninstall --yes` for source installations.
+- A documented Rust 1.89 MSRV with a dedicated CI check, matching the
+  dependency tree (`uuid` 1.29 requires Rust 1.89).
 - `fluxbar config reload`, which reports item/plugin/timer counts and returns
   configuration errors directly instead of requiring the lower-level
   `fluxbar trigger config_reload` event.
@@ -56,10 +71,7 @@ semantic versioning once a stable release is published.
 ### Documentation
 
 - Added contribution, security, conduct, and third-party attribution policies.
-- Documented the plugin and script trust model.
-
-## [0.1.0] - 2026-10-23
-
-Initial FluxBar implementation: native macOS bar, JSON-RPC IPC, configurable
-items, events and timers, plugin SDK/host, SketchyBar compatibility layer, and
-the yabai/AeroSpace workspaces example.
+- Added a Russian end-to-end guide, configuration reference, plugin guide, and
+  release checklist.
+- Documented the plugin and script trust model, Homebrew service usage, and the
+  release artifact and signing workflow.

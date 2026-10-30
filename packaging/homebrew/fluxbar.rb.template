@@ -1,0 +1,53 @@
+# Stable Homebrew formula for FluxBar releases.
+#
+# This template is rendered by scripts/release.sh (and the release workflow)
+# with the version, release asset URL, and SHA-256 of the universal archive.
+# The source-tree Formula/fluxbar.rb remains the development/HEAD formula.
+class Fluxbar < Formula
+  desc "Native macOS status bar with a Liquid Glass UI and plugins"
+  homepage "https://github.com/fluxbar/fluxbar"
+  url "@@URL@@"
+  sha256 "@@SHA256@@"
+  license "MIT"
+
+  depends_on macos: :monterey
+
+  def install
+    bin.install "fluxbar"
+  end
+
+  service do
+    run [opt_bin/"fluxbar", "start"]
+    # Restart after a crash, but let a clean `fluxbar stop` stay stopped until
+    # the next login or `brew services restart`.
+    keep_alive crashed: true
+    run_at_load true
+    process_type :interactive
+    stop_timeout 10
+    working_dir var
+    log_path var/"log/fluxbar.log"
+    error_log_path var/"log/fluxbar.err.log"
+    environment_variables PATH: std_service_path_env
+  end
+
+  def caveats
+    <<~EOS
+      FluxBar reads ~/.config/fluxbar/fluxbar.toml and creates a default
+      configuration on first start.
+
+      Start FluxBar at login with:
+        brew services start fluxbar
+
+      Stop the managed service with:
+        brew services stop fluxbar
+
+      Service logs:
+        #{var}/log/fluxbar.log
+        #{var}/log/fluxbar.err.log
+    EOS
+  end
+
+  test do
+    assert_equal "fluxbar @@VERSION@@", shell_output("#{bin}/fluxbar --version").strip
+  end
+end

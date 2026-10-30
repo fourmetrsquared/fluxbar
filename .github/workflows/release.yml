@@ -1,0 +1,204 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (for example v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Audit workspace lockfile
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  verify:
+    name: Verify release source
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Validate release tag
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [[ "$RELEASE_TAG" != "v$version" ]]; then
+            echo "Tag $RELEASE_TAG does not match workspace version $version" >&2
+            exit 1
+          fi
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for $version" >&2
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting, lints, examples, and tests
+        run: ./build.sh check
+
+      - name: Check Markdown links
+        run: python3 scripts/check_markdown_links.py
+
+  build:
+    name: Build and publish
+    needs: [audit, verify]
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [[ -z "${APPLE_CERTIFICATE_P12:-}" ]]; then
+            echo "No APPLE_CERTIFICATE_P12 secret configured; the release will be unsigned."
+            exit 0
+          fi
+          if [[ -z "${APPLE_KEYCHAIN_PASSWORD:-}" ]]; then
+            echo "APPLE_KEYCHAIN_PASSWORD is required when signing." >&2
+            exit 1
+          fi
+          if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+            echo "APPLE_SIGNING_IDENTITY is required when signing." >&2
+            exit 1
+          fi
+
+          keychain="$RUNNER_TEMP/fluxbar-signing.keychain-db"
+          cert="$RUNNER_TEMP/fluxbar-signing.p12"
+          security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain"
+          printf '%s' "$APPLE_CERTIFICATE_P12" | base64 -D > "$cert"
+          security import "$cert" -k "$keychain" \
+            -P "${APPLE_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s \
+            -k "$APPLE_KEYCHAIN_PASSWORD" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+          rm -f "$cert"
+          security find-identity -v -p codesigning "$keychain"
+
+      - name: Build universal release artifacts
+        env:
+          FLUXBAR_CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: ./scripts/release.sh
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxbar-${{ env.RELEASE_TAG }}
+          path: target/dist/assets/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            prerelease+=(--prerelease)
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" target/dist/assets/* --clobber
+            gh release edit "$RELEASE_TAG" \
+              --notes-file target/dist/assets/RELEASE_NOTES.md
+          else
+            gh release create "$RELEASE_TAG" target/dist/assets/* \
+              --verify-tag \
+              --title "FluxBar ${RELEASE_TAG#v}" \
+              --notes-file target/dist/assets/RELEASE_NOTES.md \
+              "${prerelease[@]}"
+          fi
+
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY || 'fluxbar/homebrew-tap' }}
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "No HOMEBREW_TAP_TOKEN secret configured; copy target/dist/assets/fluxbar.rb to the tap manually."
+            exit 0
+          fi
+          tap_dir="$RUNNER_TEMP/homebrew-tap"
+          rm -rf "$tap_dir"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPOSITORY}.git" "$tap_dir"
+          mkdir -p "$tap_dir/Formula"
+          cp target/dist/assets/fluxbar.rb "$tap_dir/Formula/fluxbar.rb"
+          cd "$tap_dir"
+          git config user.name "FluxBar Release Bot"
+          git config user.email "release@fluxbar.dev"
+          git add Formula/fluxbar.rb
+          if git diff --cached --quiet; then
+            echo "Homebrew formula is unchanged."
+            exit 0
+          fi
+          git commit -m "fluxbar ${RELEASE_TAG#v}"
+          git push
+
+      - name: Remove Developer ID keychain
+        if: always()
+        run: |
+          keychain="$RUNNER_TEMP/fluxbar-signing.keychain-db"
+          if [[ -f "$keychain" ]]; then
+            security delete-keychain "$keychain" || true
+          fi

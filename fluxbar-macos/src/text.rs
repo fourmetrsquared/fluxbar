@@ -34,10 +34,10 @@ thread_local! {
 /// Resolve a configured font name with the same fallback AppKit uses when the
 /// font is unavailable.
 pub(crate) fn ns_font(name: Option<&str>, size: f64) -> Retained<NSFont> {
-    if let Some(name) = name {
-        if let Some(font) = NSFont::fontWithName_size(&NSString::from_str(name), size) {
-            return font;
-        }
+    if let Some(name) = name
+        && let Some(font) = NSFont::fontWithName_size(&NSString::from_str(name), size)
+    {
+        return font;
     }
     NSFont::systemFontOfSize(size)
 }

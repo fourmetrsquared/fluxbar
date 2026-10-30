@@ -478,10 +478,10 @@ fn interpreter(runtime: &PluginRuntime, path: &Path) -> (String, Vec<String>) {
 }
 
 pub(crate) fn expand_home(path: &Path) -> PathBuf {
-    if let Ok(relative) = path.strip_prefix("~") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(relative);
-        }
+    if let Ok(relative) = path.strip_prefix("~")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(relative);
     }
     path.to_path_buf()
 }

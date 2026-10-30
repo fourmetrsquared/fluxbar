@@ -620,10 +620,10 @@ fn read_text_limited(path: &Path, limit: u64) -> Result<String> {
 }
 
 fn write_text_private(path: &Path, contents: &str) -> Result<()> {
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if metadata.file_type().is_symlink() {
-            fs::remove_file(path)?;
-        }
+    if let Ok(metadata) = fs::symlink_metadata(path)
+        && metadata.file_type().is_symlink()
+    {
+        fs::remove_file(path)?;
     }
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -1002,10 +1002,10 @@ fn locate_source(config_dir: &Path, name: &str, config_path: &Path) -> Result<Pa
     if let Some(args) = plugin.get("args").and_then(toml::Value::as_array) {
         for argument in args.iter().filter_map(toml::Value::as_str) {
             let path = Path::new(argument);
-            if path.is_absolute() {
-                if let Some(directory) = manifest_ancestor(path) {
-                    return Ok(directory);
-                }
+            if path.is_absolute()
+                && let Some(directory) = manifest_ancestor(path)
+            {
+                return Ok(directory);
             }
         }
     }

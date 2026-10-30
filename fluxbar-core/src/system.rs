@@ -157,11 +157,11 @@ impl SystemMonitor {
                     }
 
                     // App focus polling (cheap enough at a few seconds).
-                    if let Some(app) = frontmost_app().await {
-                        if last_app.as_deref() != Some(app.as_str()) {
-                            last_app = Some(app.clone());
-                            self.state.emit(Event::new(EventKind::AppFocus, json!({"app": app})).with_source("system"));
-                        }
+                    if let Some(app) = frontmost_app().await
+                        && last_app.as_deref() != Some(app.as_str())
+                    {
+                        last_app = Some(app.clone());
+                        self.state.emit(Event::new(EventKind::AppFocus, json!({"app": app})).with_source("system"));
                     }
                 }
                 _ = battery.tick() => {
@@ -179,10 +179,10 @@ impl SystemMonitor {
                             json!({"volume": volume}),
                         ).with_source("system"));
                     }
-                    if self.config.media {
-                        if let Some(media) = now_playing().await {
-                            self.state.emit(Event::new(EventKind::MediaChange, media).with_source("system"));
-                        }
+                    if self.config.media
+                        && let Some(media) = now_playing().await
+                    {
+                        self.state.emit(Event::new(EventKind::MediaChange, media).with_source("system"));
                     }
                 }
                 _ = space.tick() => {
@@ -319,27 +319,27 @@ pub async fn output_volume() -> Option<u8> {
 /// Now-playing information from Music or Spotify.
 pub async fn now_playing() -> Option<serde_json::Value> {
     let spotify = r#"if application "Spotify" is running then tell application "Spotify" to return (artist of current track) & "|" & (name of current track)"#;
-    if let Some(raw) = run_osascript(spotify).await {
-        if let Some((artist, title)) = raw.split_once('|') {
-            return Some(json!({
-                "player": "Spotify",
-                "artist": artist,
-                "title": title,
-                "playing": true,
-            }));
-        }
+    if let Some(raw) = run_osascript(spotify).await
+        && let Some((artist, title)) = raw.split_once('|')
+    {
+        return Some(json!({
+            "player": "Spotify",
+            "artist": artist,
+            "title": title,
+            "playing": true,
+        }));
     }
 
     let music = r#"if application "Music" is running then tell application "Music" to return (artist of current track) & "|" & (name of current track)"#;
-    if let Some(raw) = run_osascript(music).await {
-        if let Some((artist, title)) = raw.split_once('|') {
-            return Some(json!({
-                "player": "Music",
-                "artist": artist,
-                "title": title,
-                "playing": true,
-            }));
-        }
+    if let Some(raw) = run_osascript(music).await
+        && let Some((artist, title)) = raw.split_once('|')
+    {
+        return Some(json!({
+            "player": "Music",
+            "artist": artist,
+            "title": title,
+            "playing": true,
+        }));
     }
 
     None

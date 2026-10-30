@@ -7,8 +7,10 @@
 #   brew install --HEAD fluxbar/dev/fluxbar
 #   brew services start fluxbar
 #
-# A tagged release adds a stable `url`/`sha256` pair and is published through
-# the `fluxbar/tap` tap. Until then, use `--HEAD`.
+# This file is the development/HEAD formula. The release workflow renders a
+# stable binary formula from packaging/homebrew/fluxbar.rb.template and
+# publishes it through the `fluxbar/tap` tap. Until the first tagged release,
+# use `--HEAD`.
 class Fluxbar < Formula
   desc "Native macOS status bar with a Liquid Glass UI and plugins"
   homepage "https://github.com/fluxbar/fluxbar"
@@ -59,6 +61,6 @@ class Fluxbar < Formula
   end
 
   test do
-    assert_match(/\Afluxbar \d+\.\d+\.\d+/, shell_output("#{bin}/fluxbar --version"))
+    assert_match(/\Afluxbar \d+\.\d+\.\d+/, shell_output("#{bin}/fluxbar --version").strip)
   end
 end

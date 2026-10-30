@@ -72,17 +72,17 @@ impl ScriptRunner {
                 continue;
             }
 
-            if event.name() == "mouse.clicked" {
-                if let Some(script) = config.click_script.clone() {
-                    spawn_item_script(
-                        &mut tasks,
-                        &self.state,
-                        &self.context,
-                        &item.name,
-                        event,
-                        script,
-                    );
-                }
+            if event.name() == "mouse.clicked"
+                && let Some(script) = config.click_script.clone()
+            {
+                spawn_item_script(
+                    &mut tasks,
+                    &self.state,
+                    &self.context,
+                    &item.name,
+                    event,
+                    script,
+                );
             }
 
             let Some(script) = config.script.clone() else {
@@ -238,12 +238,12 @@ async fn run_item_script(
                 .insert("MODIFIER".into(), modifier.to_string());
         }
     }
-    if event.name() == "mouse.scrolled" {
-        if let Some(delta) = event.payload.get("delta").and_then(Value::as_f64) {
-            invocation
-                .environment
-                .insert("SCROLL_DELTA".into(), delta.to_string());
-        }
+    if event.name() == "mouse.scrolled"
+        && let Some(delta) = event.payload.get("delta").and_then(Value::as_f64)
+    {
+        invocation
+            .environment
+            .insert("SCROLL_DELTA".into(), delta.to_string());
     }
 
     let output = run_script(context, &invocation).await?;

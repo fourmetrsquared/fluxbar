@@ -9,6 +9,9 @@
 #   ./build.sh run [args]   Build and run the daemon/CLI
 #   ./build.sh test         Run all tests
 #   ./build.sh check        fmt --check + clippy + tests (CI equivalent)
+#   ./build.sh dist         Build universal release artifacts + checksums
+#   ./build.sh docs         Check relative links in Markdown files
+#   ./build.sh uninstall    Remove the source-installed binary (keep config)
 #   ./build.sh clippy       Run clippy with warnings denied
 #   ./build.sh fmt          Format all sources
 #   ./build.sh clean        Remove build artifacts
@@ -34,7 +37,7 @@ warn()    { printf "${YELLOW}!${NC} %s\n" "$*"; }
 die()     { printf "${RED}error:${NC} %s\n" "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+    awk 'NR > 2 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"
     exit 0
 }
 
@@ -51,8 +54,8 @@ ensure_toolchain() {
     local major minor
     major="$(echo "$version" | cut -d. -f1)"
     minor="$(echo "$version" | cut -d. -f2)"
-    if (( major < 1 )) || (( major == 1 && minor < 85 )); then
-        die "Rust $version is too old; FluxBar needs Rust 1.85+ (edition 2024). Run: rustup update stable"
+    if (( major < 1 )) || (( major == 1 && minor < 89 )); then
+        die "Rust $version is too old; FluxBar needs Rust 1.89+ (edition 2024). Run: rustup update stable"
     fi
 }
 
@@ -141,6 +144,31 @@ cmd_check() {
     cmd_test
 }
 
+cmd_dist() {
+    "$SCRIPT_DIR/scripts/release.sh" "$@"
+}
+
+cmd_docs() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        die "python3 is required for the Markdown link check"
+    fi
+    python3 "$SCRIPT_DIR/scripts/check_markdown_links.py"
+}
+
+cmd_uninstall() {
+    local prefix="${FLUXBAR_PREFIX:-$HOME/.local/bin}"
+    local binary="$prefix/fluxbar"
+    if [[ ! -e "$binary" ]]; then
+        info "FluxBar is not installed at $binary"
+        return
+    fi
+    if [[ "${1:-}" != "--yes" ]]; then
+        die "refusing to remove $binary without --yes"
+    fi
+    rm -f "$binary"
+    success "Removed $binary (configuration and caches were kept)"
+}
+
 cmd_clippy() {
     ensure_toolchain
     cargo clippy --workspace --all-targets -- -D warnings
@@ -195,6 +223,9 @@ main() {
         run)         cmd_run "$@" ;;
         test)        cmd_test ;;
         check)       cmd_check ;;
+        dist)        cmd_dist "$@" ;;
+        docs)        cmd_docs ;;
+        uninstall)   cmd_uninstall "$@" ;;
         examples)    build_examples ;;
         clippy)      cmd_clippy ;;
         fmt|format)  cmd_fmt ;;

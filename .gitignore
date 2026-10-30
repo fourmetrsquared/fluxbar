@@ -14,3 +14,7 @@ target/
 # Editor metadata
 .idea/
 .vscode/
+
+# Python helper caches
+__pycache__/
+*.pyc
