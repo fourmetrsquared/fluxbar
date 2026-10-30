@@ -355,11 +355,12 @@ find ~/.config/fluxbar/plugins.d -type f -exec chmod 600 {} +
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the
 development workflow, review expectations, attribution rules, and the security
-checklist. CI runs formatting, clippy, example builds, tests, the MSRV check,
-and a relative Markdown link check; the security workflow runs `cargo audit`
-for the workspace and both example lockfiles, plus `cargo-deny` and
-`cargo-machete`. Tagged releases are handled by the release workflow. See
-[docs/RELEASE.md](docs/RELEASE.md) for the release process.
+checklist. CI runs formatting, clippy, example builds, unit tests, the
+process-level daemon integration suite, the MSRV check, and a relative Markdown
+link check; the security workflow runs `cargo audit` for the workspace and both
+example lockfiles, plus `cargo-deny` and `cargo-machete`. Tagged releases are
+handled by the release workflow. See [docs/RELEASE.md](docs/RELEASE.md) for the
+release process.
 Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and
 user-visible changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 

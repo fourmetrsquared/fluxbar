@@ -30,9 +30,10 @@ Unless stated otherwise, every item is done when:
 
 ## v1.0.x hardening status
 
-P0-01 through P0-06 are complete. The main remaining release-quality task is
-P3-01, the automated daemon integration harness; the current P0 regressions are
-covered by unit/integration tests plus the manual checks in
+P0-01 through P0-06 and P3-01 are complete. The daemon integration suite
+covers process lifecycle, IPC, transactional reload, plugin failure isolation,
+signals, permissions, and PID locking; rendering regressions are covered by
+the renderer unit tests plus the manual checks in
 [docs/RELEASE.md](docs/RELEASE.md).
 
 ---
@@ -477,15 +478,20 @@ covered by unit/integration tests plus the manual checks in
 
 ## P3 — Quality, documentation, and polish
 
-### [ ] P3-01 — Add a daemon integration harness (`Test`, repo)
+### [x] P3-01 — Add a daemon integration harness (`Test`, repo)
 
-- Spawn the real daemon headless with a temporary config/socket and exercise
-  start, ping, item CRUD, config reload, plugin crash/restart, `SIGTERM`,
-  `SIGINT`, and `stop`.
-- Cover socket cleanup, PID locking, permissions, and two-daemon conflicts
-  introduced by P0-05.
-- Acceptance: the suite runs in CI on macOS and Linux; each P0 regression has
-  at least one end-to-end test.
+- Added `fluxbar-cli/tests/daemon_integration.rs`, which spawns the real
+  `fluxbar` binary headless with a private temporary config and socket.
+- The suite covers start/ping, CLI item CRUD, transactional config reload,
+  bounded plugin crash/restart, plugin removal on reload, `SIGTERM`, `SIGINT`,
+  `stop`, socket/PID cleanup, file permissions, stale PID recovery, and
+  two-daemon conflicts.
+- The lifecycle tests exercise the P0-04 and P0-05/P0-06 failure modes end to
+  end. The rendering-specific P0-01/P0-02/P0-03 regressions remain covered by
+  their unit tests and the visual release checklist, since a headless daemon
+  cannot assert painted pixels.
+- Acceptance met for the daemon harness: `./build.sh check` runs it on macOS
+  and Linux CI.
 
 ### [ ] P3-02 — Expand automated test coverage (`Test`, repo)
 

@@ -12,7 +12,8 @@ The first public release is `0.1.0`. Update the version in `Cargo.toml`,
 - [ ] The default branch is green on macOS and Linux CI, including the example
       plugins.
 - [ ] The MSRV job passes with Rust 1.89.
-- [ ] `./build.sh check` passes on a clean checkout.
+- [ ] `./build.sh check` passes on a clean checkout, including
+      `cargo test -p fluxbar-cli --test daemon_integration`.
 - [ ] `./build.sh docs` reports no broken relative Markdown links.
 - [ ] `cargo audit`, `cargo audit --file examples/plugins/hello/Cargo.lock`, and
       `cargo audit --file examples/plugins/workspaces/Cargo.lock` pass.

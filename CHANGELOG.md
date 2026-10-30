@@ -37,6 +37,9 @@ yabai/AeroSpace workspaces example.
   selective monitor restart, and bar visibility updates.
 - Graceful `SIGINT`/`SIGTERM` shutdown and a locked, owner-only PID file with
   stale-process recovery.
+- A process-level daemon integration suite covering IPC startup, item CRUD,
+  transactional reload, plugin crash isolation, signals, permissions, stale
+  PID recovery, and two-daemon conflicts.
 - Explicit plugin lifecycle states (`starting`, `running`, `backoff`,
   `stopped`, `failed`), targeted direct notifications, graceful stop/restart,
   consecutive restart accounting, and init-failure recovery.

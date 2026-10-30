@@ -93,6 +93,7 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
 | `cargo deny check` / `cargo machete` | ✅ CI security job |
 | Unsafe-code policy | ✅ only `fluxbar-macos`; documented in [SAFETY.md](SAFETY.md) |
 | Unit tests for config parsing and IPC routing | ✅ (config includes/merging/timers/mouse actions, JSON-RPC roundtrip, handler routing, plugin protocol/backoff, layout/animations) |
+| Daemon integration suite | ✅ real headless binary: item CRUD, transactional reload, plugin crash/restart, `SIGTERM`/`SIGINT`, socket/PID cleanup, permissions, stale PID, two-daemon conflict |
 | Docs updated | ✅ README, configuration reference, plugin guide, status, examples, Russian end-to-end guide |
 
 ## Milestones
