@@ -21,6 +21,8 @@ pub struct DaemonHandler {
     pub renderer: Arc<dyn Renderer>,
     pub started: Instant,
     pub frames: Arc<AtomicU64>,
+    pub requests: Arc<AtomicU64>,
+    pub errors: Arc<AtomicU64>,
     pub shutdown: Arc<AtomicBool>,
     pub config_path: Option<PathBuf>,
     pub bar_visible: Arc<AtomicBool>,
@@ -29,8 +31,10 @@ pub struct DaemonHandler {
 
 #[async_trait::async_trait]
 impl RequestHandler for DaemonHandler {
+    #[tracing::instrument(name = "ipc.request", skip(self, params), fields(method = %method))]
     async fn handle(&self, method: &str, params: Value) -> Result<Value> {
-        match method {
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        let result = match method {
             "system.ping" => Ok(json!({"pong": true, "version": fluxbar_core::VERSION})),
             "system.status" => Ok(self.status()),
             "system.shutdown" => {
@@ -132,7 +136,11 @@ impl RequestHandler for DaemonHandler {
                 Ok(json!({"visible": false}))
             }
             other => Err(FluxError::NotImplemented(other.to_string())),
+        };
+        if result.is_err() {
+            self.errors.fetch_add(1, Ordering::Relaxed);
         }
+        result
     }
 
     fn methods(&self) -> Vec<&'static str> {
@@ -166,15 +174,35 @@ impl RequestHandler for DaemonHandler {
 impl DaemonHandler {
     fn status(&self) -> Value {
         let state = self.state.read();
+        let plugins = self.plugins.list();
+        let running_plugins = plugins
+            .iter()
+            .filter(|plugin| plugin["running"].as_bool().unwrap_or(false))
+            .count();
+        let plugin_restarts: u64 = plugins
+            .iter()
+            .map(|plugin| plugin["restarts"].as_u64().unwrap_or(0))
+            .sum();
+        let frames = self.frames.load(Ordering::Relaxed);
+        let events = self.state.bus().stats();
         json!({
             "version": fluxbar_core::VERSION,
             "uptime_secs": self.started.elapsed().as_secs(),
             "items": state.items.len(),
-            "plugins": self.plugins.list().iter().filter(|p| p["running"].as_bool().unwrap_or(false)).count(),
-            "frames": self.frames.load(Ordering::Relaxed),
+            "plugins": running_plugins,
+            "frames": frames,
             "config": self.config_path.as_ref().map(|p| p.display().to_string()),
             "space": state.current_space,
             "app": state.current_app,
+            "counters": {
+                "events": events.emitted,
+                "dropped_events": events.dropped,
+                "event_subscribers": events.subscribers,
+                "frames": frames,
+                "plugin_restarts": plugin_restarts,
+                "ipc_requests": self.requests.load(Ordering::Relaxed),
+                "ipc_errors": self.errors.load(Ordering::Relaxed),
+            },
         })
     }
 
@@ -353,6 +381,8 @@ mod tests {
             renderer: Arc::new(TestRenderer),
             started: Instant::now(),
             frames: Arc::new(AtomicU64::new(0)),
+            requests: Arc::new(AtomicU64::new(0)),
+            errors: Arc::new(AtomicU64::new(0)),
             shutdown: Arc::new(AtomicBool::new(false)),
             config_path: None,
             bar_visible: Arc::new(AtomicBool::new(true)),

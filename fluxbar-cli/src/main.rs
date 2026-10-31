@@ -10,6 +10,7 @@ mod commands;
 mod daemon;
 mod default_config;
 mod handler;
+mod logging;
 mod plugin_manager;
 mod scripts;
 mod service;
@@ -34,6 +35,23 @@ struct Cli {
     /// Colorize diagnostics (also honors NO_COLOR for `auto`).
     #[arg(long, global = true, value_enum, default_value_t = ColorChoice::Auto)]
     color: ColorChoice,
+
+    /// Write logs to this file (with rotation) instead of stderr.
+    #[arg(long, global = true, env = "FLUXBAR_LOG_FILE")]
+    log_file: Option<PathBuf>,
+
+    /// Rotate the log after this many bytes; 0 disables rotation.
+    #[arg(
+        long,
+        global = true,
+        env = "FLUXBAR_LOG_MAX_BYTES",
+        default_value_t = 10 * 1024 * 1024
+    )]
+    log_max_bytes: u64,
+
+    /// Number of rotated log files to keep.
+    #[arg(long, global = true, env = "FLUXBAR_LOG_KEEP", default_value_t = 3)]
+    log_keep: usize,
 
     #[command(subcommand)]
     command: Command,
@@ -90,7 +108,11 @@ enum Command {
         payload: String,
     },
     /// Show the daemon status.
-    Status,
+    Status {
+        /// Print the raw `system.status` response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Manage the configuration.
     Config {
         #[command(subcommand)]
@@ -187,7 +209,12 @@ struct InstallArgs {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    init_tracing(cli.verbose);
+    init_tracing(
+        cli.verbose,
+        cli.log_file.as_deref(),
+        cli.log_max_bytes,
+        cli.log_keep,
+    );
     let color = cli.color.enabled();
 
     let socket = cli.socket.clone().unwrap_or_else(client::default_socket);
@@ -209,7 +236,7 @@ fn main() -> ExitCode {
         Command::Remove { name } => commands::remove(&socket, &name),
         Command::List { plugins } => commands::list(&socket, plugins),
         Command::Trigger { name, payload } => commands::trigger(&socket, &name, &payload),
-        Command::Status => commands::status(&socket),
+        Command::Status { json } => commands::status(&socket, json),
         Command::Config { command } => commands::config(config, &socket, command),
         Command::Plugin { command } => commands::plugin(&socket, config, command),
         Command::Service { command } => service::run(command),
@@ -234,7 +261,12 @@ fn report_error(error: &anyhow::Error, color: bool) {
     }
 }
 
-fn init_tracing(verbosity: u8) {
+fn init_tracing(
+    verbosity: u8,
+    log_file: Option<&std::path::Path>,
+    log_max_bytes: u64,
+    log_keep: usize,
+) {
     let level = match verbosity {
         0 => "warn",
         1 => "info",
@@ -242,11 +274,28 @@ fn init_tracing(verbosity: u8) {
         _ => "trace",
     };
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        tracing_subscriber::EnvFilter::new(format!("fluxbar={level},fluxbar_core={level}"))
+        tracing_subscriber::EnvFilter::new(format!(
+            "fluxbar={level},fluxbar_core={level},fluxbar_macos={level},fluxbar_sdk={level}"
+        ))
     });
-    let _ = tracing_subscriber::fmt()
+    let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_target(false)
-        .with_writer(std::io::stderr)
-        .try_init();
+        .with_target(false);
+
+    if let Some(path) = log_file {
+        match logging::RotatingMakeWriter::new(path, log_max_bytes, log_keep) {
+            Ok(writer) => {
+                let _ = builder.with_ansi(false).with_writer(writer).try_init();
+                return;
+            }
+            Err(error) => {
+                eprintln!(
+                    "fluxbar: could not open log file {}: {error}; logging to stderr",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    let _ = builder.with_writer(std::io::stderr).try_init();
 }

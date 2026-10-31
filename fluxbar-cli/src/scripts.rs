@@ -45,6 +45,7 @@ impl ScriptRunner {
                         match received {
                             Ok(event) => self.handle_event(&event).await,
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                self.state.bus().record_lag(skipped);
                                 warn!(skipped, "item script subscriber lagged");
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

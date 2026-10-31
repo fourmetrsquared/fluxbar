@@ -12,8 +12,12 @@ use std::path::Path;
 use std::path::PathBuf;
 
 /// Print the status of the running daemon.
-pub fn status(socket: &Path) -> Result<()> {
+pub fn status(socket: &Path, as_json: bool) -> Result<()> {
     let value = client::call(socket, "system.status", json!({}))?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
     println!("FluxBar {}", value["version"].as_str().unwrap_or("unknown"));
     println!("socket:   {}", socket.display());
     if let Some(config) = value["config"].as_str() {
@@ -23,6 +27,22 @@ pub fn status(socket: &Path) -> Result<()> {
     println!("items:    {}", value["items"].as_u64().unwrap_or(0));
     println!("plugins:  {}", value["plugins"].as_u64().unwrap_or(0));
     println!("frames:   {}", value["frames"].as_u64().unwrap_or(0));
+    if let Some(counters) = value.get("counters") {
+        println!(
+            "events:   {} (dropped {})",
+            counters["events"].as_u64().unwrap_or(0),
+            counters["dropped_events"].as_u64().unwrap_or(0)
+        );
+        println!(
+            "requests: {} (errors {})",
+            counters["ipc_requests"].as_u64().unwrap_or(0),
+            counters["ipc_errors"].as_u64().unwrap_or(0)
+        );
+        println!(
+            "restarts: {}",
+            counters["plugin_restarts"].as_u64().unwrap_or(0)
+        );
+    }
     Ok(())
 }
 

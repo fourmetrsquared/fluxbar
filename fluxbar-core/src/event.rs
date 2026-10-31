@@ -6,6 +6,7 @@
 use crate::error::{FluxError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
 /// Built-in and custom event kinds.
@@ -127,10 +128,28 @@ impl Event {
     }
 }
 
+/// Counters collected by the event bus.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct EventStats {
+    /// Events published to the bus.
+    pub emitted: u64,
+    /// Event deliveries skipped because a subscriber lagged.
+    pub dropped: u64,
+    /// Current number of subscribers.
+    pub subscribers: usize,
+}
+
+#[derive(Debug, Default)]
+struct EventCounters {
+    emitted: AtomicU64,
+    dropped: AtomicU64,
+}
+
 /// Cloneable handle to the event bus.
 #[derive(Debug, Clone)]
 pub struct EventBus {
     sender: broadcast::Sender<Arc<Event>>,
+    counters: Arc<EventCounters>,
 }
 
 impl Default for EventBus {
@@ -143,7 +162,10 @@ impl EventBus {
     /// Create a bus with the given channel capacity.
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity.max(16));
-        Self { sender }
+        Self {
+            sender,
+            counters: Arc::new(EventCounters::default()),
+        }
     }
 
     /// Subscribe to all events.
@@ -153,13 +175,28 @@ impl EventBus {
 
     /// Publish an event. Returns the number of active receivers.
     pub fn emit(&self, event: Event) -> usize {
+        self.counters.emitted.fetch_add(1, Ordering::Relaxed);
         // A send error only means there are no subscribers, which is fine.
         self.sender.send(Arc::new(event)).unwrap_or(0)
+    }
+
+    /// Record deliveries skipped by a lagging subscriber.
+    pub fn record_lag(&self, skipped: u64) {
+        self.counters.dropped.fetch_add(skipped, Ordering::Relaxed);
     }
 
     /// Number of active subscribers.
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()
+    }
+
+    /// Snapshot of bus counters.
+    pub fn stats(&self) -> EventStats {
+        EventStats {
+            emitted: self.counters.emitted.load(Ordering::Relaxed),
+            dropped: self.counters.dropped.load(Ordering::Relaxed),
+            subscribers: self.subscriber_count(),
+        }
     }
 }
 
@@ -259,6 +296,13 @@ mod tests {
         assert_eq!(event.name(), "hello");
         assert_eq!(event.payload["a"], 1);
         assert_eq!(bus.subscriber_count(), 1);
+
+        let stats = bus.stats();
+        assert_eq!(stats.emitted, 1);
+        assert_eq!(stats.dropped, 0);
+        assert_eq!(stats.subscribers, 1);
+        bus.record_lag(3);
+        assert_eq!(bus.stats().dropped, 3);
     }
 
     #[test]

@@ -697,3 +697,81 @@ fn color_flag_controls_error_styling() {
     assert!(!never.status.success());
     assert!(!String::from_utf8_lossy(&never.stderr).contains("\u{1b}["));
 }
+
+#[test]
+fn status_json_exposes_counters() {
+    let env = TestEnv::new();
+    let mut daemon = env.start();
+    daemon.wait_ready(&env);
+
+    let output = env.cli_ok(&["status", "--json"]);
+    let status: Value = serde_json::from_str(&output).expect("status --json output");
+    assert_eq!(status["version"], env!("CARGO_PKG_VERSION"));
+    assert!(status["counters"]["ipc_requests"].as_u64().unwrap_or(0) >= 1);
+    assert!(status["counters"]["events"].is_u64());
+    assert!(status["counters"]["dropped_events"].is_u64());
+    assert!(status["counters"]["plugin_restarts"].is_u64());
+    assert!(status["counters"]["frames"].is_u64());
+    assert!(status["items"].is_u64());
+
+    daemon.stop(&env);
+}
+
+#[test]
+fn file_logging_writes_and_rotates_without_a_terminal() {
+    let env = TestEnv::new();
+    let log_path = env.dir.path().join("rotate.log");
+    let stderr_path = env.dir.path().join("daemon-stderr.log");
+    let stderr = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&stderr_path)
+        .unwrap();
+    let child = env
+        .command()
+        .args([
+            "--log-file",
+            &log_path.to_string_lossy(),
+            "--log-max-bytes",
+            "256",
+            "--log-keep",
+            "2",
+            "-v",
+            "start",
+            "--headless",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .expect("start daemon with file logging");
+    let mut daemon = Daemon {
+        child: Some(child),
+        socket: env.socket.clone(),
+        pid: env.pid.clone(),
+        log: stderr_path,
+    };
+    daemon.wait_ready(&env);
+
+    daemon.stop(&env);
+
+    let paths = [
+        log_path.clone(),
+        PathBuf::from(format!("{}.1", log_path.display())),
+        PathBuf::from(format!("{}.2", log_path.display())),
+    ];
+    let contents = paths
+        .iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .collect::<String>();
+    assert!(
+        contents.contains("daemon ready"),
+        "rotated logs did not contain daemon diagnostics: {contents:?}"
+    );
+    assert!(
+        paths.iter().any(|path| path.exists()),
+        "no log file was created"
+    );
+    assert_eq!(file_mode(&log_path), 0o600);
+}

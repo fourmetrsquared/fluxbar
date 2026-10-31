@@ -36,8 +36,8 @@ use objc2_foundation::{
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void};
-use std::sync::Once;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -353,6 +353,9 @@ fn dirty_region(
     mode: PaintMode,
     view_height: f64,
 ) -> DirtyRegion {
+    if debug_layout_enabled() {
+        return DirtyRegion::All;
+    }
     let Some(previous) = previous else {
         return DirtyRegion::All;
     };
@@ -457,6 +460,48 @@ fn paint_frame(view: &BarView, frame: &RenderFrame, mode: PaintMode, dirty: NSRe
             bounds.size.height,
             view.ivars().native_glass,
             &view.ivars().truncating_style,
+        );
+    }
+
+    if debug_layout_enabled() {
+        paint_debug_layout(frame, bounds);
+    }
+}
+
+fn debug_layout_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("FLUXBAR_DEBUG_LAYOUT").is_some_and(|value| {
+            let value = value.to_string_lossy();
+            value != "0" && !value.eq_ignore_ascii_case("false")
+        })
+    })
+}
+
+fn paint_debug_layout(frame: &RenderFrame, bounds: NSRect) {
+    let color = NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 0.15, 0.15, 0.9);
+    color.setStroke();
+
+    let bar = NSRect::new(
+        NSPoint::new(0.0, 0.0),
+        NSSize::new(bounds.size.width, bounds.size.height),
+    );
+    let bar_path = NSBezierPath::bezierPathWithRect(bar);
+    bar_path.setLineWidth(1.0);
+    bar_path.stroke();
+
+    for item in &frame.items {
+        let rect = item_rect(item, frame, bounds.size.height);
+        let path = NSBezierPath::bezierPathWithRect(rect);
+        path.setLineWidth(1.0);
+        path.stroke();
+        debug!(
+            item = %item.name,
+            x = rect.origin.x,
+            y = rect.origin.y,
+            width = rect.size.width,
+            height = rect.size.height,
+            "layout bounds"
         );
     }
 }

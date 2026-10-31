@@ -142,7 +142,7 @@ clean-machine verification steps.
 ```bash
 fluxbar start                       # daemon + native bar
 fluxbar start --headless            # daemon only (IPC/plugin testing)
-fluxbar status                      # uptime, item/plugin counts, frames
+fluxbar status [--json]             # uptime, counts, counters (raw JSON optional)
 fluxbar stop
 fluxbar service install|status|uninstall  # source-install LaunchAgent
 
@@ -172,14 +172,39 @@ fluxbar plugin remove hello
 fluxbar paths
 ```
 
-Global flags: `--socket <path>`, `--config <file>`, `-v/-vv/-vvv`, and
-`--color=auto|always|never`. Diagnostics are colorized only on a terminal by
-default; `NO_COLOR=1` or `--color=never` disables styling, while
-`--color=always` is useful in CI logs. Errors include the failing RPC method,
-item/plugin name, config path, and a concrete next step where possible.
+Global flags: `--socket <path>`, `--config <file>`, `-v/-vv/-vvv`,
+`--color=auto|always|never`, and the logging flags below. Diagnostics are
+colorized only on a terminal by default; `NO_COLOR=1` or `--color=never`
+disables styling, while `--color=always` is useful in CI logs. Errors include
+the failing RPC method, item/plugin name, config path, and a concrete next step
+where possible.
+
+### Observability
+
+Run with `-v` (or `RUST_LOG=fluxbar=debug`) for structured diagnostics. File
+logging is optional and size-rotated, so a daemon can run without a terminal:
+
+```bash
+fluxbar --log-file ~/Library/Logs/FluxBar/fluxbar.log \
+        --log-max-bytes 10485760 --log-keep 3 -v start
+```
+
+`--log-max-bytes 0` disables rotation; `--log-keep 0` truncates the active file
+instead of keeping archives. Log files and newly created parent directories are
+owner-only. `RUST_LOG` filtering works with both stderr and file output.
+
+`fluxbar status --json` returns the raw `system.status` response, including
+`counters.events`, `counters.dropped_events`, `counters.frames`,
+`counters.plugin_restarts`, `counters.ipc_requests`, and
+`counters.ipc_errors`. `fluxbar status` prints the same counters in text form.
+
+Set `FLUXBAR_DEBUG_LAYOUT=1` while starting the GUI to draw red bar/item bounds
+and log each item's layout rectangle at debug level. This is useful for
+diagnosing clipping and spacing without changing the configuration.
 
 Environment variables: `FLUXBAR_SOCKET`, `FLUXBAR_CONFIG`, `FLUXBAR_CONFIG_DIR`,
-`NO_COLOR`, and `RUST_LOG`.
+`FLUXBAR_LOG_FILE`, `FLUXBAR_LOG_MAX_BYTES`, `FLUXBAR_LOG_KEEP`,
+`FLUXBAR_DEBUG_LAYOUT`, `NO_COLOR`, and `RUST_LOG`.
 
 ## Documentation
 

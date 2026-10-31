@@ -25,7 +25,7 @@ use std::time::Duration;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, watch};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 /// Stable run time after which the consecutive-crash counter is reset.
 const STABLE_RUN: Duration = Duration::from_secs(60);
@@ -192,13 +192,14 @@ impl PluginProcess {
             .take()
             .ok_or_else(|| FluxError::Plugin("plugin stdout unavailable".into()))?;
 
-        // Forward stderr to the daemon log.
+        // Forward stderr to the daemon log, preserving conventional levels.
         if let Some(stderr) = child.stderr.take() {
             let name = spec.name.clone();
             tokio::spawn(async move {
                 let mut stderr = BufReader::new(stderr);
                 while let Ok(Some(line)) = read_line_limited(&mut stderr, MAX_MESSAGE_BYTES).await {
-                    warn!(plugin = %name, "{line}");
+                    let (level, message) = classify_stderr(&line);
+                    log_plugin_stderr(&name, level, &message);
                 }
             });
         }
@@ -308,6 +309,78 @@ impl PluginProcess {
         let mut parts = vec![self.command.clone()];
         parts.extend(self.args.clone());
         parts.join(" ")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StderrLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+    Unknown,
+}
+
+fn level_from_name(name: &str) -> Option<StderrLevel> {
+    match name
+        .trim_matches(|character: char| character == '[' || character == ']' || character == ':')
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "error" | "err" | "fatal" | "panic" => Some(StderrLevel::Error),
+        "warn" | "warning" => Some(StderrLevel::Warn),
+        "info" | "notice" => Some(StderrLevel::Info),
+        "debug" => Some(StderrLevel::Debug),
+        "trace" => Some(StderrLevel::Trace),
+        _ => None,
+    }
+}
+
+/// Parse a plugin stderr line into a level and message.
+///
+/// Plugins commonly emit `error: ...`, `[warn] ...`, or JSON lines such as
+/// `{"level":"debug","message":"..."}`. Unstructured output remains a warning.
+fn classify_stderr(line: &str) -> (StderrLevel, String) {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return (StderrLevel::Unknown, String::new());
+    }
+
+    if trimmed.starts_with('{')
+        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
+        && let Some(level) = value
+            .get("level")
+            .and_then(Value::as_str)
+            .and_then(level_from_name)
+    {
+        let message = value
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or(trimmed)
+            .to_string();
+        return (level, message);
+    }
+
+    let split = trimmed
+        .find(|character: char| character.is_whitespace())
+        .unwrap_or(trimmed.len());
+    let token = &trimmed[..split];
+    let message = trimmed[split..].trim_start();
+    if let Some(level) = level_from_name(token) {
+        return (level, message.to_string());
+    }
+    (StderrLevel::Unknown, trimmed.to_string())
+}
+
+fn log_plugin_stderr(name: &str, level: StderrLevel, message: &str) {
+    match level {
+        StderrLevel::Error => error!(plugin = %name, stream = "stderr", "{message}"),
+        StderrLevel::Warn => warn!(plugin = %name, stream = "stderr", "{message}"),
+        StderrLevel::Info => info!(plugin = %name, stream = "stderr", "{message}"),
+        StderrLevel::Debug => debug!(plugin = %name, stream = "stderr", "{message}"),
+        StderrLevel::Trace => trace!(plugin = %name, stream = "stderr", "{message}"),
+        StderrLevel::Unknown => warn!(plugin = %name, stream = "stderr", "{message}"),
     }
 }
 
@@ -483,6 +556,7 @@ impl PluginHost {
     }
 
     /// Start a single plugin.
+    #[tracing::instrument(name = "plugin.start", skip(self, spec), fields(plugin = %spec.name))]
     pub fn start(&self, spec: PluginSpec) {
         let name = spec.name.clone();
         let mut plugins = self.plugins.lock();
@@ -542,6 +616,7 @@ impl PluginHost {
     }
 
     /// Stop a plugin by name and wait for its graceful shutdown handshake.
+    #[tracing::instrument(name = "plugin.stop", skip(self), fields(plugin = %name))]
     pub async fn stop(&self, name: &str) -> Result<()> {
         let removed = self.plugins.lock().remove(name);
         match removed {
@@ -673,6 +748,7 @@ async fn run_script_plugin(
                 match received {
                     Ok(event) => ((*event).clone(), false),
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        state.bus().record_lag(skipped);
                         warn!(plugin = %name, skipped, "script plugin event subscriber lagged");
                         continue;
                     }
@@ -852,6 +928,7 @@ async fn run_plugin(
                         match received {
                             Ok(event) => ((*event).clone(), false),
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                state.bus().record_lag(skipped);
                                 warn!(plugin = %name, skipped, "plugin event subscriber lagged");
                                 continue;
                             }
@@ -975,6 +1052,30 @@ async fn wait_or_shutdown(duration: Duration, shutdown_rx: &mut watch::Receiver<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classifies_plugin_stderr_levels() {
+        assert_eq!(
+            classify_stderr("error: boom"),
+            (StderrLevel::Error, "boom".into())
+        );
+        assert_eq!(
+            classify_stderr("[warning] slow down"),
+            (StderrLevel::Warn, "slow down".into())
+        );
+        assert_eq!(
+            classify_stderr("INFO ready"),
+            (StderrLevel::Info, "ready".into())
+        );
+        assert_eq!(
+            classify_stderr(r#"{"level":"debug","message":"state"}"#),
+            (StderrLevel::Debug, "state".into())
+        );
+        assert_eq!(
+            classify_stderr("plain output"),
+            (StderrLevel::Unknown, "plain output".into())
+        );
+    }
 
     #[test]
     fn subscription_matching() {

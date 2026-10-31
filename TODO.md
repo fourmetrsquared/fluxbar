@@ -394,15 +394,25 @@ the renderer unit tests plus the manual checks in
   below 0.5% on the reference machine; no busy loop or per-frame allocation
   regression.
 
-### [ ] P2-06 — Add production observability (`Feature`, core/CLI)
+### [x] P2-06 — Add production observability (`Feature`, core/CLI)
 
-- Add optional file logging with rotation, `RUST_LOG` filtering, tracing spans
-  for IPC/plugin/config operations, counters (events, dropped events, frames,
-  restarts), and a debug overlay for layout bounds.
-- Forward plugin stderr with plugin name/level instead of treating every line
-  as a warning.
-- Acceptance: logs can be collected without a terminal; `fluxbar status
-  --json` exposes counters; a debug flag produces actionable diagnostics.
+- Added optional size-rotated file logging through `--log-file`,
+  `--log-max-bytes`, and `--log-keep` (plus `FLUXBAR_LOG_*`). Files and newly
+  created parent directories are owner-only; `RUST_LOG` and `-v` filtering
+  work with both file and stderr output.
+- Added IPC request/config reload/plugin lifecycle tracing spans and
+  level-aware plugin stderr forwarding (`error:`, `[warn]`, and JSON
+  `{"level":...}` lines). Event-bus lag is now counted in addition to logged.
+- `fluxbar status --json` exposes events, dropped deliveries, frames, plugin
+  restarts, IPC requests, and IPC errors; the text output includes the same
+  counters.
+- `FLUXBAR_DEBUG_LAYOUT=1` draws red bar/item bounds and logs layout
+  rectangles at debug level, while normal rendering remains unchanged.
+- Added unit tests for rotation, permissions, symlink rejection, stderr level
+  classification, and event counters, plus process-level tests for file
+  logging and `status --json`.
+- Acceptance met: logs can be collected without a terminal; `status --json`
+  exposes counters; debug bounds and structured diagnostics are actionable.
 
 ### [ ] P2-07 — Build release and packaging infrastructure (`Chore`, repo)
 

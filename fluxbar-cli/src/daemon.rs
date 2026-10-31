@@ -378,6 +378,7 @@ impl RuntimeReload {
     /// The file is fully parsed and validated before any runtime state is
     /// touched. Items, plugins, timers, the system monitor, and bar
     /// visibility are then reconciled against the new configuration.
+    #[tracing::instrument(name = "config.reload", skip_all)]
     pub(crate) fn reload(&self) -> fluxbar_core::error::Result<ReloadReport> {
         // Reloads can be triggered by both the event bus and an IPC client at
         // the same time. Serialize the whole reconcile so validation, state
@@ -575,6 +576,8 @@ async fn async_main(
         renderer: renderer.clone(),
         started: Instant::now(),
         frames: frames.clone(),
+        requests: Arc::new(AtomicU64::new(0)),
+        errors: Arc::new(AtomicU64::new(0)),
         shutdown: shutdown.clone(),
         config_path: config_path.clone(),
         bar_visible: bar_visible.clone(),
@@ -691,6 +694,7 @@ async fn async_main(
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        state.bus().record_lag(skipped);
                         warn!(skipped, "daemon event subscriber lagged");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

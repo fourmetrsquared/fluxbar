@@ -48,6 +48,13 @@ yabai/AeroSpace workspaces example.
   point at `fluxbar list`/`fluxbar plugin list`; config validation includes the
   file and field; `fluxbar stop` is idempotent when nothing is running.
 - `--color=auto|always|never` with `NO_COLOR` support for error output.
+- Optional size-rotated file logging (`--log-file`, `--log-max-bytes`,
+  `--log-keep`) with owner-only permissions and `RUST_LOG`/`-v` filtering.
+- `fluxbar status --json` counters for events, dropped deliveries, frames,
+  plugin restarts, IPC requests, and IPC errors. IPC/config reload spans,
+  plugin lifecycle spans, and level-aware plugin stderr forwarding.
+- `FLUXBAR_DEBUG_LAYOUT=1` draws red bar/item bounds and logs layout rectangles
+  at debug level for clipping diagnostics.
 - Explicit plugin lifecycle states (`starting`, `running`, `backoff`,
   `stopped`, `failed`), targeted direct notifications, graceful stop/restart,
   consecutive restart accounting, and init-failure recovery.

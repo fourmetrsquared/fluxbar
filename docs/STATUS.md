@@ -79,6 +79,19 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
   running as the logged-in user; there is no sandbox. Install only trusted
   plugins and review build commands.
 
+## Observability
+
+- ✅ Optional file logging uses owner-only files, size thresholds, and bounded
+  numbered rotation (`--log-file`, `--log-max-bytes`, `--log-keep`).
+  `RUST_LOG`/`-v` filtering applies to file and terminal output.
+- ✅ `fluxbar status --json` exposes event, dropped-delivery, frame, plugin
+  restart, IPC request, and IPC error counters. IPC requests and config reloads
+  are tracing spans; plugin lifecycle and stderr lines carry the plugin name.
+- ✅ Plugin stderr prefixes (`error:`, `[warn]`, JSON `{"level":...}`) map to
+  the corresponding tracing level instead of every line becoming a warning.
+- ✅ `FLUXBAR_DEBUG_LAYOUT=1` draws red layout bounds and logs item rectangles at
+  debug level; the normal renderer remains unchanged when it is unset.
+
 ## Non-functional requirements
 
 | ID | Status | Notes |
