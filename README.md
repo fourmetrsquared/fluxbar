@@ -15,9 +15,7 @@ visibility without restarting the daemon. Plugin code changes still require a
 rebuild and a plugin restart.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  ◆ FluxBar   ▦ 12%   ▤ 9.2/32G        ♪ Song — Artist      ◍ 80%  ▮ 87%  │
-└──────────────────────────────────────────────────────────────────────────┘
+<img src="image example/main.png">
 ```
 
 ## Quick start
