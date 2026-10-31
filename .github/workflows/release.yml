@@ -143,7 +143,7 @@ jobs:
         run: ./scripts/release.sh
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fluxbar-${{ env.RELEASE_TAG }}
           path: target/dist/assets/*
