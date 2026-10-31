@@ -547,14 +547,22 @@ the renderer unit tests plus the manual checks in
 - Acceptance: a new contributor can build, test, and submit a plugin without
   reading source; security reports have a private channel.
 
-### [ ] P3-07 — UX and error-message polish (`Fix`, CLI/daemon)
+### [x] P3-07 — UX and error-message polish (`Fix`, CLI/daemon)
 
-- Replace generic RPC/config errors with actionable messages that include the
-  method, item/plugin name, config file, and field. Honor `NO_COLOR` and add
-  `--color=auto|always|never`.
-- Ensure failed shell/plugin actions are visible at an appropriate log level.
-- Acceptance: common failures (not running, bad socket, bad config, missing
-  plugin, stale PID) each have a clear one-line remedy.
+- Client errors now name the socket and suggest `fluxbar start`, `--socket`, or
+  `fluxbar paths`; RPC failures include the method, and item/plugin misses point
+  at `fluxbar list` / `fluxbar plugin list`. `fluxbar stop` is idempotent when
+  the daemon is already absent.
+- Semantic config validation includes the config file path and field, and the
+  daemon's bind/PID errors explain how to recover from a bad socket directory or
+  stale PID file. Plugin/script failures continue to use warning/error spans
+  with the plugin name.
+- Added `--color=auto|always|never`; `auto` requires a terminal and honors
+  `NO_COLOR`/`TERM=dumb`, while explicit `always`/`never` override detection.
+- Added process-level tests for not-running errors, idempotent stop, invalid
+  config paths/fields, missing item/plugin remedies, and color selection.
+- Acceptance met: not running, bad socket, bad config, missing plugin, and stale
+  PID failures each include a concrete next step.
 
 ### [ ] P3-08 — Grow the examples and presets (`Docs`, examples)
 

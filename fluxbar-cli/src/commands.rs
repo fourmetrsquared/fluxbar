@@ -32,6 +32,13 @@ pub fn stop(socket: &Path) -> Result<()> {
             println!("FluxBar stopped");
             Ok(())
         }
+        Err(fluxbar_core::error::FluxError::IpcUnavailable(_)) => {
+            println!(
+                "FluxBar is not running at {}; nothing to stop",
+                socket.display()
+            );
+            Ok(())
+        }
         Err(error) => bail!("{error}"),
     }
 }

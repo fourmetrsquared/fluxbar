@@ -931,7 +931,12 @@ impl Config {
         let config: Self = root
             .try_into()
             .map_err(|e| FluxError::Config(format!("cannot parse {}: {e}", path.display())))?;
-        config.validate()?;
+        config.validate().map_err(|error| match error {
+            FluxError::Config(message) => {
+                FluxError::Config(format!("{}: {message}", path.display()))
+            }
+            other => other,
+        })?;
         Ok(config)
     }
 

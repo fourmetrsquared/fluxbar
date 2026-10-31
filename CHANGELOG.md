@@ -43,6 +43,11 @@ yabai/AeroSpace workspaces example.
 - `fluxbar service install|status|uninstall` for source installs, with a
   per-user launchd agent, crash-only restarts, private logs, and cleanup of the
   plist, socket, PID file, and optional logs.
+- Actionable CLI diagnostics: connection failures name the socket and suggest
+  `fluxbar start`/`--socket`; item and plugin errors name the RPC method and
+  point at `fluxbar list`/`fluxbar plugin list`; config validation includes the
+  file and field; `fluxbar stop` is idempotent when nothing is running.
+- `--color=auto|always|never` with `NO_COLOR` support for error output.
 - Explicit plugin lifecycle states (`starting`, `running`, `backoff`,
   `stopped`, `failed`), targeted direct notifications, graceful stop/restart,
   consecutive restart accounting, and init-failure recovery.

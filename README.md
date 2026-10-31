@@ -172,9 +172,14 @@ fluxbar plugin remove hello
 fluxbar paths
 ```
 
-Global flags: `--socket <path>`, `--config <file>`, `-v/-vv/-vvv`.
-Environment variables: `FLUXBAR_SOCKET`, `FLUXBAR_CONFIG`, `FLUXBAR_CONFIG_DIR`
-and `RUST_LOG`.
+Global flags: `--socket <path>`, `--config <file>`, `-v/-vv/-vvv`, and
+`--color=auto|always|never`. Diagnostics are colorized only on a terminal by
+default; `NO_COLOR=1` or `--color=never` disables styling, while
+`--color=always` is useful in CI logs. Errors include the failing RPC method,
+item/plugin name, config path, and a concrete next step where possible.
+
+Environment variables: `FLUXBAR_SOCKET`, `FLUXBAR_CONFIG`, `FLUXBAR_CONFIG_DIR`,
+`NO_COLOR`, and `RUST_LOG`.
 
 ## Documentation
 

@@ -612,3 +612,88 @@ fn service_command_is_macos_only() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn not_running_errors_include_remedies_and_stop_is_idempotent() {
+    let env = TestEnv::new();
+
+    let status = env.cli(&["status"]);
+    assert!(!status.status.success());
+    let stderr = String::from_utf8_lossy(&status.stderr);
+    assert!(
+        stderr.contains("cannot connect to FluxBar at")
+            && stderr.contains("fluxbar start")
+            && stderr.contains("--socket"),
+        "unhelpful status error: {stderr}"
+    );
+
+    let stop = env.cli(&["stop"]);
+    assert!(stop.status.success(), "idempotent stop failed: {stop:?}");
+    let stdout = String::from_utf8_lossy(&stop.stdout);
+    assert!(
+        stdout.contains("not running") && stdout.contains("nothing to stop"),
+        "unhelpful stop output: {stdout}"
+    );
+}
+
+#[test]
+fn invalid_config_reports_the_file_and_field() {
+    let env = TestEnv::new();
+    env.write_config("[bar]\nheight = 999\n");
+
+    let output = env.cli(&["config", "validate"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&env.config.display().to_string()),
+        "missing config path: {stderr}"
+    );
+    assert!(
+        stderr.contains("bar.height must be between 0 and 256"),
+        "missing field error: {stderr}"
+    );
+}
+
+#[test]
+fn missing_item_and_plugin_errors_name_the_object_and_remedy() {
+    let env = TestEnv::new();
+    let mut daemon = env.start();
+    daemon.wait_ready(&env);
+
+    let item = env.cli(&["remove", "does-not-exist"]);
+    assert!(!item.status.success());
+    let stderr = String::from_utf8_lossy(&item.stderr);
+    assert!(
+        stderr.contains("item not found")
+            && stderr.contains("does-not-exist")
+            && stderr.contains("fluxbar list")
+            && stderr.contains("item.remove"),
+        "unhelpful item error: {stderr}"
+    );
+
+    let plugin = env.cli(&["plugin", "restart", "does-not-exist"]);
+    assert!(!plugin.status.success());
+    let stderr = String::from_utf8_lossy(&plugin.stderr);
+    assert!(
+        stderr.contains("plugin not found")
+            && stderr.contains("does-not-exist")
+            && stderr.contains("fluxbar plugin list")
+            && stderr.contains("plugin.restart"),
+        "unhelpful plugin error: {stderr}"
+    );
+
+    daemon.stop(&env);
+}
+
+#[test]
+fn color_flag_controls_error_styling() {
+    let env = TestEnv::new();
+
+    let always = env.cli(&["--color=always", "status"]);
+    assert!(!always.status.success());
+    assert!(String::from_utf8_lossy(&always.stderr).contains("\u{1b}[1;31m"));
+
+    let never = env.cli(&["--color=never", "status"]);
+    assert!(!never.status.success());
+    assert!(!String::from_utf8_lossy(&never.stderr).contains("\u{1b}["));
+}

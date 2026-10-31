@@ -1,6 +1,7 @@
 //! FluxBar command-line interface.
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -30,8 +31,33 @@ struct Cli {
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     verbose: u8,
 
+    /// Colorize diagnostics (also honors NO_COLOR for `auto`).
+    #[arg(long, global = true, value_enum, default_value_t = ColorChoice::Auto)]
+    color: ColorChoice,
+
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ColorChoice {
+    Auto,
+    Always,
+    Never,
+}
+
+impl ColorChoice {
+    fn enabled(self) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Never => false,
+            Self::Auto => {
+                std::io::stderr().is_terminal()
+                    && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+                    && std::env::var("TERM").map_or(true, |term| term != "dumb")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -162,6 +188,7 @@ struct InstallArgs {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     init_tracing(cli.verbose);
+    let color = cli.color.enabled();
 
     let socket = cli.socket.clone().unwrap_or_else(client::default_socket);
     let config = cli.config.clone();
@@ -171,7 +198,7 @@ fn main() -> ExitCode {
             return match daemon::run(config, socket, headless) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    eprintln!("fluxbar: {error:#}");
+                    report_error(&error, color);
                     ExitCode::FAILURE
                 }
             };
@@ -193,9 +220,17 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("fluxbar: {error:#}");
+            report_error(&error, color);
             ExitCode::FAILURE
         }
+    }
+}
+
+fn report_error(error: &anyhow::Error, color: bool) {
+    if color {
+        eprintln!("\x1b[1;31mfluxbar:\x1b[0m {error:#}");
+    } else {
+        eprintln!("fluxbar: {error:#}");
     }
 }
 

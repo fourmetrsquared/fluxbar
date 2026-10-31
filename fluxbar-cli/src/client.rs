@@ -20,10 +20,45 @@ pub fn call(socket: &Path, method: &str, params: Value) -> Result<Value> {
     runtime.block_on(async {
         let mut client = IpcClient::connect(socket).await.map_err(|error| {
             FluxError::IpcUnavailable(format!(
-                "cannot connect to {}: {error}. Is `fluxbar start` running?",
+                "cannot connect to FluxBar at `{}`: {error}. Start it with `fluxbar start`, or check `--socket` / `fluxbar paths`.",
                 socket.display()
             ))
         })?;
-        client.call(method, params).await
+        client
+            .call(method, params)
+            .await
+            .map_err(|error| with_method_context(method, error))
     })
+}
+
+/// Add the failing RPC method and a concrete next step to common errors.
+fn with_method_context(method: &str, error: FluxError) -> FluxError {
+    match error {
+        FluxError::ItemNotFound(name) => FluxError::ItemNotFound(format!(
+            "`{name}` while handling `{method}`; run `fluxbar list` to see configured items"
+        )),
+        FluxError::PluginNotFound(name) => FluxError::PluginNotFound(format!(
+            "`{name}` while handling `{method}`; run `fluxbar plugin list` to see installed plugins"
+        )),
+        FluxError::InvalidArgument(message) => {
+            FluxError::InvalidArgument(format!("{message} (while handling `{method}`)"))
+        }
+        FluxError::Config(message) => {
+            FluxError::Config(format!("{message} (while handling `{method}`)"))
+        }
+        FluxError::Rpc { code, message } => {
+            let remedy = if message.starts_with("item not found:") {
+                "; run `fluxbar list` to see configured items"
+            } else if message.starts_with("plugin not found:") {
+                "; run `fluxbar plugin list` to see installed plugins"
+            } else {
+                ""
+            };
+            FluxError::Rpc {
+                code,
+                message: format!("{message}{remedy} (while handling `{method}`)"),
+            }
+        }
+        other => other,
+    }
 }

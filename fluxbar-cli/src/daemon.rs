@@ -64,10 +64,15 @@ impl PidFile {
             let pid = fs::read_to_string(path).unwrap_or_default();
             let pid = pid.trim();
             if pid.is_empty() {
-                return Err(error).with_context(|| format!("failed to lock {}", path.display()));
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to lock {}; if no FluxBar process is running, remove this stale PID file",
+                        path.display()
+                    )
+                });
             }
             anyhow::bail!(
-                "another FluxBar instance is running (pid {pid}, pid file {})",
+                "another FluxBar instance is running (pid {pid}, pid file {}); stop it with `fluxbar stop` before starting another",
                 path.display()
             );
         }
@@ -575,8 +580,12 @@ async fn async_main(
         bar_visible: bar_visible.clone(),
         reload: Some(runtime_reload.clone()),
     });
-    let server = IpcServer::bind(&socket, handler)
-        .with_context(|| format!("failed to bind {}", socket.display()))?;
+    let server = IpcServer::bind(&socket, handler).with_context(|| {
+        format!(
+            "failed to bind {}; check that its directory is writable or pass --socket <path>",
+            socket.display()
+        )
+    })?;
     let server_task = tokio::spawn(async move {
         if let Err(error) = server.run().await {
             tracing::error!(%error, "IPC server stopped");
