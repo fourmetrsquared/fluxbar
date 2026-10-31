@@ -42,7 +42,12 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
   name, switches spaces on click, and moves new AeroSpace windows according to
   explicit app rules. A window manager is required; macOS exposes no public
   Mission Control discovery or switching API.
-- 🟡 A tap-ready Homebrew formula with a `brew services` launchd definition is
+- ✅ Login integration is available in two forms: Homebrew users use the
+  formula's `brew services` launchd definition, while source installs use
+  `fluxbar service install|status|uninstall`. The source agent writes a
+  per-user plist, restarts only after crashes, keeps logs private, and removes
+  the plist/socket/PID on uninstall.
+- 🟡 A tap-ready Homebrew formula with the `brew services` definition is
   available in `Formula/fluxbar.rb`; HEAD installs work now. The tag-triggered
   release workflow builds a universal binary, `SHA256SUMS`, release notes, and
   a stable binary formula from `packaging/homebrew/fluxbar.rb.template`, with

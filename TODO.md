@@ -420,15 +420,24 @@ the renderer unit tests plus the manual checks in
 - Acceptance: a tagged release builds reproducibly from CI; installation
   instructions are verified on a clean machine; `main` is protected by checks.
 
-### [ ] P2-08 — Launch-at-login service integration (`Feature`, CLI/macOS)
+### [x] P2-08 — Launch-at-login service integration (`Feature`, CLI/macOS)
 
-- Add `fluxbar service install|uninstall|status` using a LaunchAgent plist,
-  with log paths, restart policy, and clean removal.
-- Detect an already-running daemon and avoid duplicate agents.
-- Homebrew users can already use the formula's `brew services` definition;
-  this item covers source installs without Homebrew.
-- Acceptance: login starts exactly one daemon; uninstall removes the plist,
-  socket, and optional logs; docs cover manual and service modes.
+- Added `fluxbar service install|status|uninstall` for source installs. The
+  command writes `~/Library/LaunchAgents/dev.fluxbar.fluxbar.plist`, uses
+  `RunAtLoad` plus crash-only `KeepAlive`, redirects output to private
+  `~/Library/Logs/FluxBar/` files, and manages the agent with `launchctl`.
+- `install` is idempotent: an existing agent is unloaded before the new plist
+  is bootstrapped. It refuses to start when a manually launched daemon owns the
+  socket, so two agents cannot race for the same PID lock. `--no-start` writes
+  the plist for inspection.
+- `uninstall` boots the agent out, waits for the daemon to stop, removes the
+  plist and stale socket/PID files, and optionally removes logs with
+  `--remove-logs`. `status` reports the plist, launchd state, running daemon,
+  and log locations.
+- Homebrew users continue to use the formula's `brew services` block; the two
+  modes are documented as alternatives because they share the daemon socket.
+- Acceptance met: launchd starts one daemon, uninstall removes the plist and
+  socket, and the README documents manual, Homebrew, and source-service modes.
 
 ### [ ] P2-09 — Stabilize the SDK and protocol contract (`Refactor`, SDK)
 

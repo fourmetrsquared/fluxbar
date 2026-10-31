@@ -11,6 +11,7 @@ mod default_config;
 mod handler;
 mod plugin_manager;
 mod scripts;
+mod service;
 mod sketchybar;
 
 /// Blazing fast. Secure. Absolutely customizable.
@@ -73,6 +74,11 @@ enum Command {
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,
+    },
+    /// Manage the macOS login service for a source install.
+    Service {
+        #[command(subcommand)]
+        command: service::ServiceCommand,
     },
     /// Show the socket path and configuration location.
     Paths,
@@ -179,6 +185,7 @@ fn main() -> ExitCode {
         Command::Status => commands::status(&socket),
         Command::Config { command } => commands::config(config, &socket, command),
         Command::Plugin { command } => commands::plugin(&socket, config, command),
+        Command::Service { command } => service::run(command),
         Command::Paths => commands::paths(config, &socket),
         Command::Sketchybar { args } => sketchybar::run(&socket, &args),
     };

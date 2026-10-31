@@ -40,6 +40,9 @@ yabai/AeroSpace workspaces example.
 - A process-level daemon integration suite covering IPC startup, item CRUD,
   transactional reload, plugin crash isolation, signals, permissions, stale
   PID recovery, and two-daemon conflicts.
+- `fluxbar service install|status|uninstall` for source installs, with a
+  per-user launchd agent, crash-only restarts, private logs, and cleanup of the
+  plist, socket, PID file, and optional logs.
 - Explicit plugin lifecycle states (`starting`, `running`, `backoff`,
   `stopped`, `failed`), targeted direct notifications, graceful stop/restart,
   consecutive restart accounting, and init-failure recovery.

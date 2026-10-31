@@ -81,6 +81,29 @@ next login, use `brew services restart fluxbar`. Remove a Homebrew install with
 `brew uninstall fluxbar`; remove a source install with
 `./build.sh uninstall --yes` (configuration and caches are kept).
 
+### Source installs: launchd
+
+If FluxBar was installed with `./build.sh install` (or another source method),
+the binary can manage its own per-user LaunchAgent:
+
+```bash
+fluxbar service install       # write, load, and start the agent
+fluxbar service status        # plist, launchd, daemon, and log paths
+fluxbar service uninstall     # stop the agent and remove the plist/socket
+```
+
+The agent is stored at `~/Library/LaunchAgents/dev.fluxbar.fluxbar.plist` and
+logs to `~/Library/Logs/FluxBar/fluxbar.log` and `fluxbar.err.log`. It starts at
+login and is restarted after a crash, but a clean `fluxbar stop` stays stopped
+until the next login or `launchctl kickstart`. Run these commands as your normal
+user, not with `sudo`, and do not enable this agent alongside
+`brew services start fluxbar`: both use the same daemon socket.
+
+Use `fluxbar service install --no-start` to write and inspect the plist without
+loading it. `fluxbar service uninstall --remove-logs` also deletes the service
+logs. The agent points at the executable that ran `service install`; rerun the
+command after moving or upgrading a source-installed binary.
+
 ```text
 ./build.sh              Build (debug), build examples, run tests
 ./build.sh release      Optimised build (LTO, stripped)
@@ -121,6 +144,7 @@ fluxbar start                       # daemon + native bar
 fluxbar start --headless            # daemon only (IPC/plugin testing)
 fluxbar status                      # uptime, item/plugin counts, frames
 fluxbar stop
+fluxbar service install|status|uninstall  # source-install LaunchAgent
 
 fluxbar add weather --kind text --position right --label "18°"
 fluxbar set weather label=19° icon=☀

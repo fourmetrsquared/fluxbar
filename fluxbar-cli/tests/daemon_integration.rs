@@ -549,3 +549,66 @@ label = "still alive"
 
     daemon.stop(&env);
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn service_install_no_start_writes_private_launch_agent() {
+    let env = TestEnv::new();
+    let home = env.dir.path().join("home");
+    fs::create_dir(&home).unwrap();
+    fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let output = env
+        .command()
+        .env("HOME", &home)
+        .args(["service", "install", "--no-start"])
+        .output()
+        .expect("run service install");
+    assert!(
+        output.status.success(),
+        "service install failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let plist = home.join("Library/LaunchAgents/dev.fluxbar.fluxbar.plist");
+    assert!(plist.exists(), "plist was not written");
+    assert_eq!(file_mode(&plist), 0o644);
+    assert_eq!(
+        file_mode(&home.join("Library/Logs/FluxBar")),
+        0o700,
+        "log directory permissions"
+    );
+    assert_eq!(
+        file_mode(&home.join("Library/Logs/FluxBar/fluxbar.log")),
+        0o600,
+        "log permissions"
+    );
+    let contents = fs::read_to_string(&plist).unwrap();
+    assert!(contents.contains("<string>dev.fluxbar.fluxbar</string>"));
+    assert!(contents.contains("<string>start</string>"));
+
+    let lint = Command::new("/usr/bin/plutil")
+        .arg("-lint")
+        .arg(&plist)
+        .output()
+        .expect("run plutil");
+    assert!(
+        lint.status.success(),
+        "plist is invalid:\n{}",
+        String::from_utf8_lossy(&lint.stderr)
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn service_command_is_macos_only() {
+    let env = TestEnv::new();
+    let output = env.cli(&["service", "status"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("only available on macOS"),
+        "unexpected error: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

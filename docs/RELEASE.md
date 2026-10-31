@@ -75,6 +75,9 @@ stat -f '%Sp %N' ~/Library/Caches/dev.fluxbar.fluxbar/fluxbar.pid
 
 - [ ] A clean profile can run `fluxbar config init` and start without an
       existing configuration.
+- [ ] On a source install, `fluxbar service install`, `fluxbar service status`,
+      and `fluxbar service uninstall --remove-logs` start exactly one daemon
+      and remove the plist, socket, PID file, and logs.
 
 ## Signing
 
