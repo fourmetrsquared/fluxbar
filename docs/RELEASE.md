@@ -131,6 +131,15 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
    tap repository configured by the `HOMEBREW_TAP_REPOSITORY` repository
    variable (default `fourmetrsquared/homebrew-tap`).
 
+For automatic tap updates, create a fine-grained personal access token with
+`Contents: read and write` on `fourmetrsquared/homebrew-tap` and save it as the
+`HOMEBREW_TAP_TOKEN` repository secret. The workflow's `GITHUB_TOKEN` cannot
+push to another repository. Without the secret, update the tap manually as
+described below.
+
+`main` is protected by required `CI`, `Security`, MSRV, and documentation
+checks. Force pushes, branch deletion, and non-linear history are disabled.
+
 The workflow can also be started manually from the Actions tab with an
 existing tag. Re-running it uploads the current assets to the existing release
 with `--clobber`.
