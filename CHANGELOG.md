@@ -6,6 +6,11 @@ semantic versioning once a stable release is published.
 
 ## [Unreleased]
 
+### Fixed
+
+- The headless renderer now builds on non-macOS targets, so Linux CI and
+  MSRV checks cover the same public UI API as macOS.
+
 ## [0.1.0] - 2026-10-30
 
 Initial public release: native macOS bar, JSON-RPC IPC, configurable items,

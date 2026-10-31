@@ -22,10 +22,21 @@ pub enum UiCommand {
 /// Events emitted by the headless renderer (never).
 #[derive(Debug, Clone)]
 pub enum UiEvent {
-    Click { item: String, button: i64 },
-    Scroll { item: String, delta: f64 },
-    Enter { item: String },
-    Leave { item: String },
+    Click {
+        item: String,
+        button: i64,
+        modifier: String,
+    },
+    Scroll {
+        item: String,
+        delta: f64,
+    },
+    Enter {
+        item: String,
+    },
+    Leave {
+        item: String,
+    },
 }
 
 /// No-op renderer used when AppKit is unavailable.
@@ -96,7 +107,7 @@ pub fn run_bar(
     _height: f64,
     commands: Receiver<UiCommand>,
     _events: Sender<UiEvent>,
-) -> Result<(), String> {
+) -> std::result::Result<(), String> {
     while let Ok(command) = commands.recv() {
         match command {
             UiCommand::Shutdown => break,
@@ -110,7 +121,7 @@ pub fn run_bar(
 }
 
 /// Drain UI commands without rendering anything.
-pub fn run_headless(commands: Receiver<UiCommand>) -> Result<(), String> {
+pub fn run_headless(commands: Receiver<UiCommand>) -> std::result::Result<(), String> {
     while let Ok(command) = commands.recv() {
         if matches!(command, UiCommand::Shutdown) {
             break;
