@@ -44,12 +44,12 @@ root itself, checks the toolchain version, and prints actionable errors. Run
 ### Homebrew and login service
 
 The repository contains a Homebrew formula with a launchd service definition,
-so Homebrew users can run FluxBar at login through `brew services`:
+so Homebrew users can run FluxBar at login through `brew services`. The latest
+tagged release is published as a universal macOS binary:
 
 ```bash
-# Before the first tagged release (HEAD install from this repository):
-brew tap fourmetrsquared/dev https://github.com/fourmetrsquared/fluxbar.git
-brew install --HEAD fourmetrsquared/dev/fluxbar
+brew tap fourmetrsquared/tap
+brew install fluxbar
 brew services start fluxbar
 
 brew services list
@@ -57,18 +57,20 @@ brew services restart fluxbar
 brew services stop fluxbar
 ```
 
-Once a tagged release and the `fourmetrsquared/tap` tap are published, the
-stable form is:
+To track the `main` branch instead, replace the first two commands with the
+development HEAD formula:
 
 ```bash
-brew tap fourmetrsquared/tap
-brew install fluxbar
+brew tap fourmetrsquared/dev https://github.com/fourmetrsquared/fluxbar.git
+brew install --HEAD fourmetrsquared/dev/fluxbar
 brew services start fluxbar
 ```
 
+The tap lives at
+[fourmetrsquared/homebrew-tap](https://github.com/fourmetrsquared/homebrew-tap).
 On Homebrew versions that require trust for third-party taps, run
-`brew trust fourmetrsquared/dev` once (or `brew trust fourmetrsquared/tap` for
-the stable tap) if Homebrew asks you to.
+`brew trust fourmetrsquared/tap` once for the stable tap (or
+`brew trust fourmetrsquared/dev` for HEAD) if Homebrew asks you to.
 
 Run `brew services` as your normal user, not with `sudo`: the service is a
 user LaunchAgent that must run in the graphical login session to display the

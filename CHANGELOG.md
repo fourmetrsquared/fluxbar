@@ -10,6 +10,8 @@ semantic versioning once a stable release is published.
 
 - The headless renderer now builds on non-macOS targets, so Linux CI and
   MSRV checks cover the same public UI API as macOS.
+- Manual Homebrew tap updates now use the formula published with the release,
+  so the installed binary always matches the release checksum.
 
 ## [0.1.0] - 2026-10-30
 

@@ -142,13 +142,21 @@ stable formula is generated at release time from
 `packaging/homebrew/fluxbar.rb.template` and points to the universal archive,
 so its `sha256` always matches the published asset.
 
-If the tap token is not configured, copy the generated formula manually:
+If the tap token is not configured, create an empty public
+`fourmetrsquared/homebrew-tap` repository once, then copy the formula that was
+published with the release. Do not use the locally generated formula here: a
+local universal build can have a different archive hash from the CI artifact.
 
 ```bash
-cp target/dist/assets/fluxbar.rb ../homebrew-tap/Formula/fluxbar.rb
+release=v0.1.0
+git clone git@github.com:fourmetrsquared/homebrew-tap.git ../homebrew-tap
+mkdir -p ../homebrew-tap/Formula
+curl -fL \
+  "https://github.com/fourmetrsquared/fluxbar/releases/download/${release}/fluxbar.rb" \
+  -o ../homebrew-tap/Formula/fluxbar.rb
 cd ../homebrew-tap
 git add Formula/fluxbar.rb
-git commit -m "fluxbar 0.1.0"
+git commit -m "fluxbar ${release#v}"
 git push
 ```
 

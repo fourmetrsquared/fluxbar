@@ -47,12 +47,15 @@ Legend: ✅ implemented, 🟡 partial, ⬜ reserved / not implemented.
   `fluxbar service install|status|uninstall`. The source agent writes a
   per-user plist, restarts only after crashes, keeps logs private, and removes
   the plist/socket/PID on uninstall.
-- 🟡 A tap-ready Homebrew formula with the `brew services` definition is
-  available in `Formula/fluxbar.rb`; HEAD installs work now. The tag-triggered
-  release workflow builds a universal binary, `SHA256SUMS`, release notes, and
-  a stable binary formula from `packaging/homebrew/fluxbar.rb.template`, with
-  optional Developer ID signing and automatic tap publication. Publishing the
-  tap and clean-machine install verification remain open under P2-07.
+- 🟡 The `v0.1.0` universal macOS release is published with `SHA256SUMS`,
+  release notes, and a stable binary formula. The formula is available from
+  `fourmetrsquared/tap`; it installs the binary and the `brew services` login
+  agent, and the published tap install/service path has been exercised. The
+  release workflow also renders future stable formulae from
+  `packaging/homebrew/fluxbar.rb.template`, with optional Developer ID signing
+  and automatic tap publication when `HOMEBREW_TAP_TOKEN` is configured. `main`
+  is protected by CI, Security, MSRV, and documentation checks; clean-machine
+  install/login verification remains open under P2-07.
 
 ## Security posture
 

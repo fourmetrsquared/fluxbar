@@ -425,8 +425,11 @@ the renderer unit tests plus the manual checks in
   `Formula/fluxbar.rb`. `./build.sh dist` builds the same universal artifacts
   locally, and `./build.sh uninstall --yes` removes a source install without
   touching configuration or caches.
-- Remaining: publish the `fourmetrsquared/tap` tap, verify a clean-machine
-  install and login service, and protect `main` with branch protection checks.
+- ✅ `v0.1.0` is published; `fourmetrsquared/tap` serves the stable formula;
+  the tap install, `brew test`, and `brew services start/status/stop` path were
+  exercised. `main` is protected by required CI, Security, MSRV, and
+  documentation checks.
+- Remaining: verify a clean-machine install and login service.
 - Acceptance: a tagged release builds reproducibly from CI; installation
   instructions are verified on a clean machine; `main` is protected by checks.
 
