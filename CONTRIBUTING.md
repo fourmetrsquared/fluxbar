@@ -12,7 +12,7 @@ Requirements:
 - yabai or AeroSpace only if you are working on the workspaces example
 
 ```bash
-git clone https://github.com/fluxbar/fluxbar.git
+git clone https://github.com/fourmetrsquared/fluxbar.git
 cd fluxbar
 ./build.sh check
 ```

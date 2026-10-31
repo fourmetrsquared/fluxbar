@@ -3,20 +3,20 @@
 # This repository is also a valid Homebrew tap, so a development build can be
 # installed directly from a checkout:
 #
-#   brew tap fluxbar/dev https://github.com/fluxbar/fluxbar.git
-#   brew install --HEAD fluxbar/dev/fluxbar
+#   brew tap fourmetrsquared/dev https://github.com/fourmetrsquared/fluxbar.git
+#   brew install --HEAD fourmetrsquared/dev/fluxbar
 #   brew services start fluxbar
 #
 # This file is the development/HEAD formula. The release workflow renders a
 # stable binary formula from packaging/homebrew/fluxbar.rb.template and
-# publishes it through the `fluxbar/tap` tap. Until the first tagged release,
-# use `--HEAD`.
+# publishes it through the `fourmetrsquared/tap` tap. Until the first tagged
+# release, use `--HEAD`.
 class Fluxbar < Formula
   desc "Native macOS status bar with a Liquid Glass UI and plugins"
-  homepage "https://github.com/fluxbar/fluxbar"
+  homepage "https://github.com/fourmetrsquared/fluxbar"
   version "0.1.0"
   license "MIT"
-  head "https://github.com/fluxbar/fluxbar.git", branch: "master"
+  head "https://github.com/fourmetrsquared/fluxbar.git", branch: "main"
 
   depends_on "rust" => :build
   depends_on macos: :monterey

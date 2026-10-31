@@ -16,7 +16,8 @@
 #                              runtime and a secure timestamp.
 #   FLUXBAR_DIST_DIR           Output directory (default: target/dist).
 #   FLUXBAR_REPO               GitHub owner/repo for release URLs
-#                              (default: fluxbar/fluxbar, or GITHUB_REPOSITORY).
+#                              (default: fourmetrsquared/fluxbar, or
+#                              GITHUB_REPOSITORY).
 #   MACOSX_DEPLOYMENT_TARGET   Minimum macOS version (default: 12.0).
 
 set -euo pipefail
@@ -89,7 +90,7 @@ LOCK_VERSION="$(awk '
 grep -q "^## \[$VERSION\]" "$ROOT/CHANGELOG.md" \
     || die "CHANGELOG.md has no section for $VERSION"
 
-REPO="${FLUXBAR_REPO:-${GITHUB_REPOSITORY:-fluxbar/fluxbar}}"
+REPO="${FLUXBAR_REPO:-${GITHUB_REPOSITORY:-fourmetrsquared/fluxbar}}"
 DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
 TARGETS=(x86_64-apple-darwin aarch64-apple-darwin)
 NAME="fluxbar-${VERSION}-macos-universal"
@@ -176,7 +177,7 @@ CHANGELOG_SECTION="$(awk -v ver="$VERSION" '
     printf '# FluxBar %s\n\n' "$VERSION"
     printf 'Universal macOS binary for Apple Silicon and Intel (macOS %s or later).\n\n' "$DEPLOYMENT_TARGET"
     printf '## Install\n\n```bash\n'
-    printf 'brew tap fluxbar/tap\n'
+    printf 'brew tap fourmetrsquared/tap\n'
     printf 'brew install fluxbar\n'
     printf 'brew services start fluxbar\n'
     printf '```\n\n'

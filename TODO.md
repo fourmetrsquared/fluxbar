@@ -425,8 +425,8 @@ the renderer unit tests plus the manual checks in
   `Formula/fluxbar.rb`. `./build.sh dist` builds the same universal artifacts
   locally, and `./build.sh uninstall --yes` removes a source install without
   touching configuration or caches.
-- Remaining: publish the `fluxbar/tap` tap, verify a clean-machine install and
-  login service, and protect `main` with branch protection checks.
+- Remaining: publish the `fourmetrsquared/tap` tap, verify a clean-machine
+  install and login service, and protect `main` with branch protection checks.
 - Acceptance: a tagged release builds reproducibly from CI; installation
   instructions are verified on a clean machine; `main` is protected by checks.
 

@@ -35,7 +35,7 @@ install`) или запускается через `./build.sh run`. Если б
 ### 1.1. Сборка и установка
 
 ```bash
-git clone https://github.com/fluxbar/fluxbar.git fluxbar
+git clone https://github.com/fourmetrsquared/fluxbar.git fluxbar
 cd fluxbar
 
 ./build.sh install          # release-сборка в ~/.local/bin/fluxbar
@@ -80,15 +80,15 @@ LaunchAgent. До публикации первого тега использу�
 репозитория:
 
 ```bash
-brew tap fluxbar/dev https://github.com/fluxbar/fluxbar.git
-brew install --HEAD fluxbar/dev/fluxbar
+brew tap fourmetrsquared/dev https://github.com/fourmetrsquared/fluxbar.git
+brew install --HEAD fourmetrsquared/dev/fluxbar
 brew services start fluxbar
 ```
 
 После публикации стабильного tap команды короче:
 
 ```bash
-brew tap fluxbar/tap
+brew tap fourmetrsquared/tap
 brew install fluxbar
 brew services start fluxbar
 ```
@@ -103,7 +103,8 @@ brew services stop fluxbar      # остановить и убрать из ав
 ```
 
 В Homebrew 7+ для сторонних tap может потребоваться однократная команда
-`brew trust fluxbar/dev` (или `brew trust fluxbar/tap` для стабильного tap).
+`brew trust fourmetrsquared/dev` (или `brew trust fourmetrsquared/tap` для
+стабильного tap).
 
 Запускайте `brew services` от своего пользователя, без `sudo`: это
 пользовательский LaunchAgent, и панель должна работать в графической сессии

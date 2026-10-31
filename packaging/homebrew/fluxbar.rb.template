@@ -5,7 +5,7 @@
 # The source-tree Formula/fluxbar.rb remains the development/HEAD formula.
 class Fluxbar < Formula
   desc "Native macOS status bar with a Liquid Glass UI and plugins"
-  homepage "https://github.com/fluxbar/fluxbar"
+  homepage "https://github.com/fourmetrsquared/fluxbar"
   url "@@URL@@"
   sha256 "@@SHA256@@"
   license "MIT"

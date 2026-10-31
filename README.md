@@ -1,7 +1,7 @@
 # FluxBar
 
-[![CI](https://github.com/fluxbar/fluxbar/actions/workflows/ci.yml/badge.svg)](https://github.com/fluxbar/fluxbar/actions/workflows/ci.yml)
-[![Security](https://github.com/fluxbar/fluxbar/actions/workflows/security.yml/badge.svg)](https://github.com/fluxbar/fluxbar/actions/workflows/security.yml)
+[![CI](https://github.com/fourmetrsquared/fluxbar/actions/workflows/ci.yml/badge.svg)](https://github.com/fourmetrsquared/fluxbar/actions/workflows/ci.yml)
+[![Security](https://github.com/fourmetrsquared/fluxbar/actions/workflows/security.yml/badge.svg)](https://github.com/fourmetrsquared/fluxbar/actions/workflows/security.yml)
 
 **Blazing fast. Secure. Absolutely customizable.** A next-generation macOS
 status bar written in Rust — a fast, scriptable alternative to SketchyBar with
@@ -28,7 +28,7 @@ the built-in painted glass fallback. The `rust-toolchain.toml` pins stable and
 enables `rustfmt` + `clippy`.
 
 ```bash
-git clone https://github.com/fluxbar/fluxbar.git fluxbar
+git clone https://github.com/fourmetrsquared/fluxbar.git fluxbar
 cd fluxbar
 
 ./build.sh                 # debug build + tests + example plugins
@@ -48,8 +48,8 @@ so Homebrew users can run FluxBar at login through `brew services`:
 
 ```bash
 # Before the first tagged release (HEAD install from this repository):
-brew tap fluxbar/dev https://github.com/fluxbar/fluxbar.git
-brew install --HEAD fluxbar/dev/fluxbar
+brew tap fourmetrsquared/dev https://github.com/fourmetrsquared/fluxbar.git
+brew install --HEAD fourmetrsquared/dev/fluxbar
 brew services start fluxbar
 
 brew services list
@@ -57,18 +57,18 @@ brew services restart fluxbar
 brew services stop fluxbar
 ```
 
-Once a tagged release and the `fluxbar/tap` tap are published, the stable form
-is:
+Once a tagged release and the `fourmetrsquared/tap` tap are published, the
+stable form is:
 
 ```bash
-brew tap fluxbar/tap
+brew tap fourmetrsquared/tap
 brew install fluxbar
 brew services start fluxbar
 ```
 
 On Homebrew versions that require trust for third-party taps, run
-`brew trust fluxbar/dev` once (or `brew trust fluxbar/tap` for the stable tap)
-if Homebrew asks you to.
+`brew trust fourmetrsquared/dev` once (or `brew trust fourmetrsquared/tap` for
+the stable tap) if Homebrew asks you to.
 
 Run `brew services` as your normal user, not with `sudo`: the service is a
 user LaunchAgent that must run in the graphical login session to display the

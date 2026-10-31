@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         For security vulnerabilities, use the private reporting process in
-        [SECURITY.md](https://github.com/fluxbar/fluxbar/blob/HEAD/SECURITY.md)
+        [SECURITY.md](https://github.com/fourmetrsquared/fluxbar/blob/HEAD/SECURITY.md)
         instead of this form.
 
   - type: textarea

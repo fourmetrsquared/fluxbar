@@ -13,7 +13,7 @@ edition = "2024"
 rust-version = "1.89"
 authors = ["FluxBar Contributors"]
 license = "MIT"
-repository = "https://github.com/fluxbar/fluxbar"
+repository = "https://github.com/fourmetrsquared/fluxbar"
 description = "FluxBar: Next-Generation Status Bar in Rust"
 
 [workspace.dependencies]

@@ -2,7 +2,7 @@
 
 /// Rich, commented example configuration.
 pub const DEFAULT_CONFIG: &str = r##"# FluxBar configuration
-# Docs: https://github.com/fluxbar/fluxbar
+# Docs: https://github.com/fourmetrsquared/fluxbar
 #
 # Everything can be changed at runtime with the CLI:
 #   fluxbar add battery --kind battery --position right

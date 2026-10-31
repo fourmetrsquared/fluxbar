@@ -115,8 +115,8 @@ installs are not quarantined; if you also distribute a browser-downloaded
 
 ```bash
 git status --short             # must be clean
-git tag -s v0.1.0 -m "FluxBar 0.1.0"
-git push origin master
+git tag -a v0.1.0 -m "FluxBar 0.1.0"  # use -s when a signing key is configured
+git push origin main
 git push origin v0.1.0
 ```
 
@@ -129,7 +129,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`:
    Homebrew formula;
 5. if `HOMEBREW_TAP_TOKEN` is configured, commits the generated formula to the
    tap repository configured by the `HOMEBREW_TAP_REPOSITORY` repository
-   variable (default `fluxbar/homebrew-tap`).
+   variable (default `fourmetrsquared/homebrew-tap`).
 
 The workflow can also be started manually from the Actions tab with an
 existing tag. Re-running it uploads the current assets to the existing release
@@ -155,8 +155,8 @@ git push
 Then verify the managed service from a clean user account:
 
 ```bash
-brew tap fluxbar/tap
-brew trust fluxbar/tap   # only if Homebrew requires tap trust
+brew tap fourmetrsquared/tap
+brew trust fourmetrsquared/tap  # only if Homebrew requires tap trust
 brew audit --strict --formula fluxbar
 brew install fluxbar
 brew services start fluxbar
