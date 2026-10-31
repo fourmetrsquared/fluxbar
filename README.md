@@ -14,9 +14,7 @@ stdin/stdout. Items and styling can be changed live from the CLI, and
 visibility without restarting the daemon. Plugin code changes still require a
 rebuild and a plugin restart.
 
-```
 <img src="image example/main.png">
-```
 
 ## Quick start
 
