@@ -43,7 +43,7 @@ chrono = { version = "0.4", features = ["serde"] }
 directories = "5.0"
 fs2 = "0.4"
 glob = "0.3"
-sysinfo = "0.33"
+sysinfo = "0.38"
 
 # Testing
 tempfile = "3.13"
